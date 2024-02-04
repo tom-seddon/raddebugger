@@ -67,24 +67,8 @@ os_window_set_fullscreen(OS_Handle window, B32 fullscreen)
 {
 }
 
-internal B32
-os_window_is_maximized(OS_Handle window)
-{
-  return 0;
-}
-
-internal void
-os_window_set_maximized(OS_Handle window, B32 maximized)
-{
-}
-
 internal void
 os_window_bring_to_front(OS_Handle window)
-{
-}
-
-internal void
-os_window_set_monitor(OS_Handle window, OS_Handle monitor)
 {
 }
 
@@ -106,43 +90,6 @@ internal F32
 os_dpi_from_window(OS_Handle window)
 {
   return 96.f;
-}
-
-////////////////////////////////
-//~ rjf: @os_hooks Monitors (Implemented Per-OS)
-
-internal OS_HandleArray
-os_push_monitors_array(Arena *arena)
-{
-  OS_HandleArray arr = {0};
-  return arr;
-}
-
-internal OS_Handle
-os_primary_monitor(void)
-{
-  OS_Handle handle = {1};
-  return handle;
-}
-
-internal OS_Handle
-os_monitor_from_window(OS_Handle window)
-{
-  OS_Handle handle = {1};
-  return handle;
-}
-
-internal String8
-os_name_from_monitor(Arena *arena, OS_Handle monitor)
-{
-  return str8_zero();
-}
-
-internal Vec2F32
-os_dim_from_monitor(OS_Handle monitor)
-{
-  Vec2F32 v = v2f32(1000, 1000);
-  return v;
 }
 
 ////////////////////////////////

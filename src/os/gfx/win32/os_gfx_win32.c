@@ -776,40 +776,6 @@ os_window_set_fullscreen(OS_Handle handle, B32 fullscreen)
   window->repaint = repaint;
 }
 
-internal B32
-os_window_is_maximized(OS_Handle handle)
-{
-  B32 result = 0;
-  W32_Window *window = w32_window_from_os_window(handle);
-  if(window)
-  {
-    result = !!(IsZoomed(window->hwnd));
-  }
-  return result;
-}
-
-internal void
-os_window_set_maximized(OS_Handle handle, B32 maximized)
-{
-  W32_Window *window = w32_window_from_os_window(handle);
-  if(window != 0)
-  {
-    if(window->first_paint_done)
-    {
-      switch(maximized)
-      {
-        default:
-        case 0:{ShowWindow(window->hwnd, SW_RESTORE);}break;
-        case 1:{ShowWindow(window->hwnd, SW_MAXIMIZE);}break;
-      }
-    }
-    else
-    {
-      window->maximized = maximized;
-    }
-  }
-}
-
 internal void
 os_window_bring_to_front(OS_Handle handle)
 {
@@ -817,27 +783,6 @@ os_window_bring_to_front(OS_Handle handle)
   if(window != 0)
   {
     BringWindowToTop(window->hwnd);
-  }
-}
-
-internal void
-os_window_set_monitor(OS_Handle window_handle, OS_Handle monitor)
-{
-  W32_Window *window = w32_window_from_os_window(window_handle);
-  HMONITOR hmonitor = (HMONITOR)monitor.u64[0];
-  {
-    MONITORINFOEXW info;
-    info.cbSize = sizeof(MONITORINFOEXW);
-    if(GetMonitorInfoW(hmonitor, (MONITORINFO *)&info))
-    {
-      Rng2F32 existing_rect = os_rect_from_window(window_handle);
-      Vec2F32 window_size = dim_2f32(existing_rect);
-      SetWindowPos(window->hwnd, HWND_TOP,
-                   (info.rcWork.left + info.rcWork.right)/2 - window_size.x/2,
-                   (info.rcWork.top + info.rcWork.bottom)/2 - window_size.y/2,
-                   window_size.x,
-                   window_size.y, 0);
-    }
   }
 }
 
@@ -918,71 +863,6 @@ os_window_set_placement(OS_Handle handle, String8 placement)
   HWND hwnd = w32_hwnd_from_window(window);
   const WINDOWPLACEMENT *wp = (WINDOWPLACEMENT *)placement.str;
   SetWindowPlacement(hwnd, wp);
-}
-
-////////////////////////////////
-//~ rjf: @os_hooks Monitors (Implemented Per-OS)
-
-internal OS_HandleArray
-os_push_monitors_array(Arena *arena)
-{
-  Temp scratch = scratch_begin(&arena, 1);
-  OS_HandleList list = {0};
-  {
-    W32_MonitorGatherBundle bundle = {arena, &list};
-    EnumDisplayMonitors(0, 0, w32_monitor_gather_enum_proc, (LPARAM)&bundle);
-  }
-  OS_HandleArray array = os_handle_array_from_list(arena, &list);
-  scratch_end(scratch);
-  return array;
-}
-
-internal OS_Handle
-os_primary_monitor(void)
-{
-  POINT zero_pt = {0, 0};
-  HMONITOR monitor = MonitorFromPoint(zero_pt, MONITOR_DEFAULTTOPRIMARY);
-  OS_Handle result = {(U64)monitor};
-  return result;
-}
-
-internal OS_Handle
-os_monitor_from_window(OS_Handle window)
-{
-  W32_Window *w = w32_window_from_os_window(window);
-  HMONITOR handle = MonitorFromWindow(w->hwnd, MONITOR_DEFAULTTOPRIMARY);
-  OS_Handle result = {(U64)handle};
-  return result;
-}
-
-internal String8
-os_name_from_monitor(Arena *arena, OS_Handle monitor)
-{
-  String8 result = {0};
-  HMONITOR monitor_handle = (HMONITOR)monitor.u64[0];
-  MONITORINFOEXW info;
-  info.cbSize = sizeof(MONITORINFOEXW);
-  if(GetMonitorInfoW(monitor_handle, (MONITORINFO *)&info))
-  {
-    String16 result16 = str16_cstring((U16 *)info.szDevice);
-    result = str8_from_16(arena, result16);
-  }
-  return result;
-}
-
-internal Vec2F32
-os_dim_from_monitor(OS_Handle monitor)
-{
-  Vec2F32 result = {0};
-  HMONITOR monitor_handle = (HMONITOR)monitor.u64[0];
-  MONITORINFO info = {0};
-  info.cbSize = sizeof(MONITORINFO);
-  if(GetMonitorInfoW(monitor_handle, &info))
-  {
-    result.x = info.rcWork.right - info.rcWork.left;
-    result.y = info.rcWork.bottom - info.rcWork.top;
-  }
-  return result;
 }
 
 ////////////////////////////////

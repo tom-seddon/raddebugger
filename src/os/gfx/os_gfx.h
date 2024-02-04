@@ -120,24 +120,12 @@ internal void           os_window_focus(OS_Handle window);
 internal B32            os_window_is_focused(OS_Handle window);
 internal B32            os_window_is_fullscreen(OS_Handle window);
 internal void           os_window_set_fullscreen(OS_Handle window, B32 fullscreen);
-internal B32            os_window_is_maximized(OS_Handle window);
-internal void           os_window_set_maximized(OS_Handle window, B32 maximized);
 internal void           os_window_bring_to_front(OS_Handle window);
-internal void           os_window_set_monitor(OS_Handle window, OS_Handle monitor);
 internal Rng2F32        os_rect_from_window(OS_Handle window);
 internal Rng2F32        os_client_rect_from_window(OS_Handle window);
 internal F32            os_dpi_from_window(OS_Handle window);
 internal String8        os_placement_from_window(Arena *arena, OS_Handle window);
 internal void           os_window_set_placement(OS_Handle window, String8 placement);
-
-////////////////////////////////
-//~ rjf: @os_hooks Monitors (Implemented Per-OS)
-
-internal OS_HandleArray os_push_monitors_array(Arena *arena);
-internal OS_Handle      os_primary_monitor(void);
-internal OS_Handle      os_monitor_from_window(OS_Handle window);
-internal String8        os_name_from_monitor(Arena *arena, OS_Handle monitor);
-internal Vec2F32        os_dim_from_monitor(OS_Handle monitor);
 
 ////////////////////////////////
 //~ rjf: @os_hooks Events (Implemented Per-OS)
