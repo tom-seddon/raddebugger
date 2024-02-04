@@ -24,7 +24,7 @@ os_get_clipboard_text(Arena *arena)
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 
 internal OS_Handle
-os_window_open(Vec2F32 resolution, String8 title)
+os_window_open(String8 title)
 {
   OS_Handle handle = {1};
   return handle;

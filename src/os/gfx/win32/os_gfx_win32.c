@@ -653,7 +653,7 @@ os_get_clipboard_text(Arena *arena)
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 
 internal OS_Handle
-os_window_open(Vec2F32 resolution, String8 title)
+os_window_open(String8 title)
 {
   //- rjf: make hwnd
   HWND hwnd = 0;
@@ -665,8 +665,7 @@ os_window_open(Vec2F32 resolution, String8 title)
                            (WCHAR*)title16.str,
                            WS_OVERLAPPEDWINDOW,
                            CW_USEDEFAULT, CW_USEDEFAULT,
-                           (int)resolution.x,
-                           (int)resolution.y,
+                           CW_USEDEFAULT, 0,
                            0, 0,
                            w32_h_instance,
                            0);
@@ -880,6 +879,45 @@ os_dpi_from_window(OS_Handle handle)
     result = window->dpi;
   }
   return result;
+}
+
+internal String8
+os_placement_from_window(Arena *arena, OS_Handle handle)
+{
+  String8 result = {0};
+  W32_Window *window = w32_window_from_os_window(handle);
+  if(window)
+  {
+    result.size = sizeof(WINDOWPLACEMENT);
+    result.str = push_array_no_zero(arena, U8, result.size);
+    WINDOWPLACEMENT *wp = (WINDOWPLACEMENT *)result.str;
+    wp->length = sizeof *wp;
+    if(!GetWindowPlacement(w32_hwnd_from_window(window), wp))
+    {
+      result = str8_zero();
+    }
+  }
+
+  return result;
+}
+
+internal void
+os_window_set_placement(OS_Handle handle, String8 placement)
+{
+  if (placement.size != sizeof(WINDOWPLACEMENT))
+  {
+    return;
+  }
+
+  W32_Window *window = w32_window_from_os_window(handle);
+  if (!window)
+  {
+    return;
+  }
+
+  HWND hwnd = w32_hwnd_from_window(window);
+  const WINDOWPLACEMENT *wp = (WINDOWPLACEMENT *)placement.str;
+  SetWindowPlacement(hwnd, wp);
 }
 
 ////////////////////////////////

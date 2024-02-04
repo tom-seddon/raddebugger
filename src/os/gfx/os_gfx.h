@@ -112,7 +112,7 @@ internal String8        os_get_clipboard_text(Arena *arena);
 ////////////////////////////////
 //~ rjf: @os_hooks Windows (Implemented Per-OS)
 
-internal OS_Handle      os_window_open(Vec2F32 resolution, String8 title);
+internal OS_Handle      os_window_open(String8 title);
 internal void           os_window_close(OS_Handle window);
 internal void           os_window_first_paint(OS_Handle window);
 internal void           os_window_equip_repaint(OS_Handle window, OS_WindowRepaintFunctionType *repaint, void *user_data);
@@ -127,6 +127,8 @@ internal void           os_window_set_monitor(OS_Handle window, OS_Handle monito
 internal Rng2F32        os_rect_from_window(OS_Handle window);
 internal Rng2F32        os_client_rect_from_window(OS_Handle window);
 internal F32            os_dpi_from_window(OS_Handle window);
+internal String8        os_placement_from_window(Arena *arena, OS_Handle window);
+internal void           os_window_set_placement(OS_Handle window, String8 placement);
 
 ////////////////////////////////
 //~ rjf: @os_hooks Monitors (Implemented Per-OS)

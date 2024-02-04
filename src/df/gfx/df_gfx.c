@@ -927,7 +927,7 @@ df_panel_release_all_views(DF_Panel *panel)
 //~ rjf: Window State Functions
 
 internal DF_Window *
-df_window_open(Vec2F32 size, OS_Handle preferred_monitor, DF_CfgSrc cfg_src)
+df_window_open(String8 placement, DF_CfgSrc cfg_src)
 {
   DF_Window *window = df_gfx_state->free_window;
   if(window != 0)
@@ -946,7 +946,7 @@ df_window_open(Vec2F32 size, OS_Handle preferred_monitor, DF_CfgSrc cfg_src)
   window->arena = arena_alloc();
   {
     String8 title = str8_lit_comp(RADDBG_TITLE_STRING_LITERAL);
-    window->os = os_window_open(size, title);
+    window->os = os_window_open(title);
   }
   window->r = r_window_equip(window->os);
   window->ui = ui_state_alloc();
@@ -987,11 +987,13 @@ df_window_open(Vec2F32 size, OS_Handle preferred_monitor, DF_CfgSrc cfg_src)
       scratch_end(scratch);
     }
   }
-  OS_Handle zero_monitor = {0};
-  if(!os_handle_match(zero_monitor, preferred_monitor))
-  {
-    os_window_set_monitor(window->os, preferred_monitor);
-  }
+
+  //OS_Handle zero_monitor = {0};
+  //if(!os_handle_match(zero_monitor, preferred_monitor))
+  //{
+  //  os_window_set_monitor(window->os, preferred_monitor);
+  //}
+  os_window_set_placement(window->os, placement);
   os_window_equip_repaint(window->os, df_gfx_state->repaint_hook, window);
   DLLPushBack(df_gfx_state->first_window, df_gfx_state->last_window, window);
   return window;
@@ -8162,19 +8164,23 @@ df_cfg_strings_from_gfx(Arena *arena, String8 root_path, DF_CfgSrc source)
         str8_list_push(arena, &strs, str8_lit("/// windows ///////////////////////////////////////////////////////////////////\n"));
         str8_list_push(arena, &strs, str8_lit("\n"));
       }
-      OS_Handle monitor = os_monitor_from_window(window->os);
-      String8 monitor_name = os_name_from_monitor(arena, monitor);
+      //OS_Handle monitor = os_monitor_from_window(window->os);
+      //String8 monitor_name = os_name_from_monitor(arena, monitor);
       DF_Panel *root_panel = window->root_panel;
-      Rng2F32 rect = os_rect_from_window(window->os);
-      Vec2F32 size = dim_2f32(rect);
+      //Rng2F32 rect = os_rect_from_window(window->os);
+      //Vec2F32 size = dim_2f32(rect);
+      String8 placement = os_placement_from_window(arena, window->os);
+      String8 placement_encoded = str8(NULL, base16_size_from_data_size(placement.size));
+      placement_encoded.str = push_array_no_zero(arena, U8, placement_encoded.size);
+      base16_from_data(placement_encoded.str, placement.str, placement.size);
       str8_list_push (arena, &strs,  str8_lit("window:\n"));
       str8_list_push (arena, &strs,  str8_lit("{\n"));
-      str8_list_pushf(arena, &strs,           "  %s%s%s\n",
+      str8_list_pushf(arena, &strs,           "  %s%s\n",
                       root_panel->split_axis == Axis2_X ? "split_x" : "split_y",
-                      os_window_is_fullscreen(window->os) ? " fullscreen" : "",
-                      os_window_is_maximized(window->os) ? " maximized" : "");
-      str8_list_pushf(arena, &strs, "  monitor: \"%S\"\n", monitor_name);
-      str8_list_pushf(arena, &strs, "  size:    (%i %i)\n", (int)size.x, (int)size.y);
+                      os_window_is_fullscreen(window->os) ? " fullscreen" : "");
+      str8_list_pushf(arena, &strs, "  placement: \"%S\"\n", placement_encoded);
+      //str8_list_pushf(arena, &strs, "  monitor: \"%S\"\n", monitor_name);
+      //str8_list_pushf(arena, &strs, "  size:    (%i %i)\n", (int)size.x, (int)size.y);
       str8_list_pushf(arena, &strs, "  code_font_size_delta: %.5f\n", window->code_font_size_delta);
       str8_list_pushf(arena, &strs, "  main_font_size_delta: %.5f\n", window->main_font_size_delta);
       {
@@ -11209,8 +11215,7 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
         //- rjf: windows
         case DF_CoreCmdKind_OpenWindow:
         {
-          OS_Handle preferred_monitor = {0};
-          df_window_open(v2f32(1280, 720), preferred_monitor, DF_CfgSrc_User);
+          df_window_open({0}, DF_CfgSrc_User);
         }break;
         case DF_CoreCmdKind_CloseWindow:
         {
@@ -11341,7 +11346,7 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
         case DF_CoreCmdKind_ApplyProfileData:
         {
           DF_CfgTable *table = df_cfg_table();
-          OS_HandleArray monitors = os_push_monitors_array(scratch.arena);
+          //OS_HandleArray monitors = os_push_monitors_array(scratch.arena);
           
           //- rjf: get src
           DF_CfgSrc src = DF_CfgSrc_User;
@@ -11431,8 +11436,9 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
             B32 is_fullscreen = 0;
             B32 is_maximized = 0;
             Axis2 top_level_split_axis = Axis2_X;
-            OS_Handle preferred_monitor = os_primary_monitor();
-            Vec2F32 size = {0};
+            //OS_Handle preferred_monitor = os_primary_monitor();
+            //Vec2F32 size = {0};
+            String8 placement = {0};
             F32 code_font_size_delta = 0.f;
             F32 main_font_size_delta = 0.f;
             {
@@ -11463,34 +11469,35 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
                   is_maximized = 1;
                 }
               }
-              DF_CfgNode *monitor_cfg = df_cfg_node_child_from_string(window_node, str8_lit("monitor"), StringMatchFlag_CaseInsensitive);
-              String8 preferred_monitor_name = monitor_cfg->first->string;
-              for(U64 idx = 0; idx < monitors.count; idx += 1)
+              //Vec2F32 preferred_monitor_size = os_dim_from_monitor(preferred_monitor);
+              //DF_CfgNode *size_cfg = df_cfg_node_child_from_string(window_node, str8_lit("size"), StringMatchFlag_CaseInsensitive);
+              //{
+              //  String8 x_string = size_cfg->first->string;
+              //  String8 y_string = size_cfg->first->next->string;
+              //  U64 x_u64 = 0;
+              //  U64 y_u64 = 0;
+              //  if(!try_u64_from_str8_c_rules(x_string, &x_u64))
+              //  {
+              //    x_u64 = (U64)(preferred_monitor_size.x*2/3);
+              //  }
+              //  if(!try_u64_from_str8_c_rules(y_string, &y_u64))
+              //  {
+              //    y_u64 = (U64)(preferred_monitor_size.y*2/3);
+              //  }
+              //  size.x = (F32)x_u64;
+              //  size.y = (F32)y_u64;
+              //}
+              DF_CfgNode *placement_cfg = df_cfg_node_child_from_string(window_node, str8_lit("placement"), StringMatchFlag_CaseInsensitive);
+              String8 placement_encoded = placement_cfg->first->string;
+              placement.size = data_size_from_base16_size(placement_encoded.size);
+              if (placement.size > 0)
               {
-                String8 monitor_name = os_name_from_monitor(scratch.arena, monitors.v[idx]);
-                if(str8_match(monitor_name, preferred_monitor_name, StringMatchFlag_CaseInsensitive))
+                placement.str = push_array_no_zero(scratch.arena, U8, placement.size);
+                U64 decoded_size = data_from_base16(placement.str, placement_encoded.str, placement_encoded.size);
+                if (decoded_size != placement.size)
                 {
-                  preferred_monitor = monitors.v[idx];
-                  break;
+                  placement = {0};
                 }
-              }
-              Vec2F32 preferred_monitor_size = os_dim_from_monitor(preferred_monitor);
-              DF_CfgNode *size_cfg = df_cfg_node_child_from_string(window_node, str8_lit("size"), StringMatchFlag_CaseInsensitive);
-              {
-                String8 x_string = size_cfg->first->string;
-                String8 y_string = size_cfg->first->next->string;
-                U64 x_u64 = 0;
-                U64 y_u64 = 0;
-                if(!try_u64_from_str8_c_rules(x_string, &x_u64))
-                {
-                  x_u64 = (U64)(preferred_monitor_size.x*2/3);
-                }
-                if(!try_u64_from_str8_c_rules(y_string, &y_u64))
-                {
-                  y_u64 = (U64)(preferred_monitor_size.y*2/3);
-                }
-                size.x = (F32)x_u64;
-                size.y = (F32)y_u64;
               }
               DF_CfgNode *code_font_size_delta_cfg = df_cfg_node_child_from_string(window_node, str8_lit("code_font_size_delta"), StringMatchFlag_CaseInsensitive);
               DF_CfgNode *main_font_size_delta_cfg = df_cfg_node_child_from_string(window_node, str8_lit("main_font_size_delta"), StringMatchFlag_CaseInsensitive);
@@ -11501,7 +11508,7 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
             }
             
             // rjf: open window
-            DF_Window *ws = df_window_open(size, preferred_monitor, window_node->source);
+            DF_Window *ws = df_window_open(placement, window_node->source);
             ws->code_font_size_delta = code_font_size_delta;
             ws->main_font_size_delta = main_font_size_delta;
             
@@ -11851,10 +11858,10 @@ df_gfx_begin_frame(Arena *arena, DF_CmdList *cmds)
           //- rjf: if config opened 0 windows, we need to do some sensible default
           if(src == DF_CfgSrc_User && windows->first == &df_g_nil_cfg_node)
           {
-            OS_Handle preferred_monitor = os_primary_monitor();
-            Vec2F32 monitor_dim = os_dim_from_monitor(preferred_monitor);
-            Vec2F32 window_dim = v2f32(monitor_dim.x*4/5, monitor_dim.y*4/5);
-            DF_Window *ws = df_window_open(window_dim, preferred_monitor, DF_CfgSrc_User);
+            //OS_Handle preferred_monitor = os_primary_monitor();
+            //Vec2F32 monitor_dim = os_dim_from_monitor(preferred_monitor);
+            //Vec2F32 window_dim = v2f32(monitor_dim.x*4/5, monitor_dim.y*4/5);
+            DF_Window *ws = df_window_open({0}, DF_CfgSrc_User);
             DF_CmdParams blank_params = df_cmd_params_from_window(ws);
             df_cmd_list_push(arena, cmds, &blank_params, df_cmd_spec_from_core_cmd_kind(DF_CoreCmdKind_ResetToDefaultPanels));
           }

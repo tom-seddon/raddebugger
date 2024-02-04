@@ -951,7 +951,7 @@ internal void df_panel_release_all_views(DF_Panel *panel);
 ////////////////////////////////
 //~ rjf: Window State Functions
 
-internal DF_Window *df_window_open(Vec2F32 size, OS_Handle preferred_monitor, DF_CfgSrc cfg_src);
+internal DF_Window *df_window_open(String8 plaement, DF_CfgSrc cfg_src);
 
 internal DF_Window *df_window_from_os_handle(OS_Handle os);
 
