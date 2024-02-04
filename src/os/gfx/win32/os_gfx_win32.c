@@ -836,10 +836,17 @@ os_placement_from_window(Arena *arena, OS_Handle handle)
     result.size = sizeof(WINDOWPLACEMENT);
     result.str = push_array_no_zero(arena, U8, result.size);
     WINDOWPLACEMENT *wp = (WINDOWPLACEMENT *)result.str;
-    wp->length = sizeof *wp;
-    if(!GetWindowPlacement(w32_hwnd_from_window(window), wp))
+    if(os_window_is_fullscreen(handle))
     {
-      result = str8_zero();
+      *wp = window->last_window_placement;
+    }
+    else
+    {
+      wp->length = sizeof *wp;
+      if(!GetWindowPlacement(w32_hwnd_from_window(window), wp))
+      {
+        result = str8_zero();
+      }
     }
   }
 
