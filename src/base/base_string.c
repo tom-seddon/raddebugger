@@ -731,6 +731,46 @@ str8_from_s64(Arena *arena, S64 s64, U32 radix, U8 min_digits, U8 digit_group_se
   return result;
 }
 
+internal U64
+data_size_from_base16_size(U64 size_in_bytes)
+{
+  if(size_in_bytes%2!=0)
+  {
+    // Invalid hex encoding.
+    return 0;
+  }
+
+  return size_in_bytes/2;
+}
+
+internal U64
+data_from_base16(U8 *dst, const U8 *src, U64 src_size)
+{
+  U8 *dst_base = dst;
+
+  for(U64 i=0;i<src_size;i+=2)
+  {
+    U8 ea=src[i+0];
+    U8 eb=src[i+1];
+
+    if((ea|eb)&0x80){
+      // Not 7-bit ASCII.
+      return 0;
+    }
+
+    U8 ua=integer_symbol_reverse[ea];
+    U8 ub=integer_symbol_reverse[eb];
+    if((ua|ub)==0xff){
+      // Bad hex digit.
+      return 0;
+    }
+
+    *dst++=ua<<4|ub;
+  }
+
+  return dst-dst_base;
+}
+
 ////////////////////////////////
 //~ rjf: String <=> Float Conversions
 

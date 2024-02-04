@@ -246,6 +246,8 @@ internal U64 base16_from_data(U8 *dst, U8 *src, U64 src_size);
 internal String8 str8_from_memory_size(Arena *arena, U64 z);
 internal String8 str8_from_u64(Arena *arena, U64 u64, U32 radix, U8 min_digits, U8 digit_group_separator);
 internal String8 str8_from_s64(Arena *arena, S64 s64, U32 radix, U8 min_digits, U8 digit_group_separator);
+internal U64 data_size_from_base16_size(U64 size_in_bytes);
+internal U64 data_from_base16(U8 *dst, const U8 *src, U64 src_size);
 
 ////////////////////////////////
 //~ rjf: String <=> Float Conversions
