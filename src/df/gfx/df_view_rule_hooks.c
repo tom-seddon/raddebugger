@@ -30,7 +30,7 @@ df_view_rule_hooks__rgba_from_eval(DF_Eval eval, TG_Graph *graph, RADDBG_Parsed 
       U64 array_total_size = tg_byte_size_from_graph_raddbg_key(graph, raddbg, type_key);
       U64 array_total_size_capped = ClampTop(array_total_size, 64);
       Rng1U64 array_memory_vaddr_rng = r1u64(eval.offset, eval.offset + array_total_size_capped);
-      CTRL_ProcessMemorySlice array_slice = ctrl_query_cached_data_from_process_vaddr_range(scratch.arena, process->ctrl_machine_id, process->ctrl_handle, array_memory_vaddr_rng);
+      CTRL_ProcessMemorySlice array_slice = ctrl_query_cached_data_from_process_vaddr_range(scratch.arena, process->ctrl_machine_id, process->ctrl_handle, array_memory_vaddr_rng, 0);
       String8 array_memory = array_slice.data;
       TG_Key element_type_key = tg_unwrapped_direct_from_graph_raddbg_key(graph, raddbg, type_key);
       TG_Kind element_type_kind = tg_kind_from_key(element_type_key);
@@ -67,7 +67,7 @@ df_view_rule_hooks__rgba_from_eval(DF_Eval eval, TG_Graph *graph, RADDBG_Parsed 
       U64 struct_total_size = tg_byte_size_from_graph_raddbg_key(graph, raddbg, type_key);
       U64 struct_total_size_capped = ClampTop(struct_total_size, 64);
       Rng1U64 struct_memory_vaddr_rng = r1u64(eval.offset, eval.offset + struct_total_size_capped);
-      CTRL_ProcessMemorySlice struct_slice = ctrl_query_cached_data_from_process_vaddr_range(scratch.arena, process->ctrl_machine_id, process->ctrl_handle, struct_memory_vaddr_rng);
+      CTRL_ProcessMemorySlice struct_slice = ctrl_query_cached_data_from_process_vaddr_range(scratch.arena, process->ctrl_machine_id, process->ctrl_handle, struct_memory_vaddr_rng, 0);
       String8 struct_memory = struct_slice.data;
       TG_Type *type = tg_type_from_graph_raddbg_key(scratch.arena, graph, raddbg, type_key);
       for(U64 element_idx = 0, member_idx = 0;
@@ -198,7 +198,7 @@ df_view_rule_hooks__eval_commit_rgba(DF_Eval eval, TG_Graph *graph, RADDBG_Parse
 }
 
 internal DF_BitmapTopologyInfo
-df_view_rule_hooks__bitmap_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_CfgNode *cfg)
+df_view_rule_hooks__bitmap_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_CfgNode *cfg)
 {
   Temp scratch = scratch_begin(0, 0);
   DF_BitmapTopologyInfo info = {0};
@@ -222,10 +222,10 @@ df_view_rule_hooks__bitmap_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx 
     String8 width_expr = str8_list_join(scratch.arena, &width_expr_strs, 0);
     String8 height_expr = str8_list_join(scratch.arena, &height_expr_strs, 0);
     String8 fmt_string = fmt_cfg->first->string;
-    DF_Eval width_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, width_expr);
+    DF_Eval width_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, macro_map, width_expr);
     DF_Eval width_eval_value = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, width_eval);
     info.width = width_eval_value.imm_u64;
-    DF_Eval height_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, height_expr);
+    DF_Eval height_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, macro_map, height_expr);
     DF_Eval height_eval_value = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, height_eval);
     info.height = height_eval_value.imm_u64;
     if(fmt_string.size != 0)
@@ -245,7 +245,7 @@ df_view_rule_hooks__bitmap_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx 
 }
 
 internal DF_GeoTopologyInfo
-df_view_rule_hooks__geo_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_CfgNode *cfg)
+df_view_rule_hooks__geo_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_CfgNode *cfg)
 {
   Temp scratch = scratch_begin(0, 0);
   DF_GeoTopologyInfo result = {0};
@@ -273,9 +273,9 @@ df_view_rule_hooks__geo_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ct
     String8 count_expr = str8_list_join(scratch.arena, &count_expr_strs, &join);
     String8 vertices_base_expr = str8_list_join(scratch.arena, &vertices_base_expr_strs, &join);
     String8 vertices_size_expr = str8_list_join(scratch.arena, &vertices_size_expr_strs, &join);
-    DF_Eval count_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, count_expr);
-    DF_Eval vertices_base_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, vertices_base_expr);
-    DF_Eval vertices_size_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, vertices_size_expr);
+    DF_Eval count_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, macro_map, count_expr);
+    DF_Eval vertices_base_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, macro_map, vertices_base_expr);
+    DF_Eval vertices_size_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, macro_map, vertices_size_expr);
     DF_Eval count_val_eval = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, count_eval);
     DF_Eval vertices_base_val_eval = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, vertices_base_eval);
     DF_Eval vertices_size_val_eval = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, vertices_size_eval);
@@ -288,7 +288,7 @@ df_view_rule_hooks__geo_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ct
 }
 
 internal DF_TxtTopologyInfo
-df_view_rule_hooks__txt_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_CfgNode *cfg)
+df_view_rule_hooks__txt_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_CfgNode *cfg)
 {
   Temp scratch = scratch_begin(0, 0);
   DF_TxtTopologyInfo result = zero_struct;
@@ -305,7 +305,7 @@ df_view_rule_hooks__txt_topology_info_from_cfg(DBGI_Scope *scope, DF_CtrlCtx *ct
     }
     lang_string = lang_cfg->first->string;
     String8 size_expr = str8_list_join(scratch.arena, &size_expr_strs, &join);
-    DF_Eval size_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, size_expr);
+    DF_Eval size_eval = df_eval_from_string(scratch.arena, scope, ctrl_ctx, parse_ctx, macro_map, size_expr);
     DF_Eval size_val_eval = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, size_eval);
     result.lang = txt_lang_kind_from_extension(lang_string);
     result.size_cap = size_val_eval.imm_u64;
@@ -336,7 +336,7 @@ DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_DEF(array)
           str8_list_push(scratch.arena, &array_size_expr_strs, child->string);
         }
         String8 array_size_expr = str8_list_join(scratch.arena, &array_size_expr_strs, 0);
-        DF_Eval array_size_eval = df_eval_from_string(arena, dbgi_scope, ctrl_ctx, parse_ctx, array_size_expr);
+        DF_Eval array_size_eval = df_eval_from_string(arena, dbgi_scope, ctrl_ctx, parse_ctx, macro_map, array_size_expr);
         DF_Eval array_size_eval_value = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, array_size_eval);
         eval_error_list_concat_in_place(&eval.errors, &array_size_eval.errors);
         array_size = array_size_eval_value.imm_u64;
@@ -546,7 +546,7 @@ DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_DEF(rgba)
   
   //- rjf: hover color box -> show components
   UI_Signal sig = ui_signal_from_box(color_box);
-  if(sig.hovering)
+  if(ui_hovering(sig))
   {
     ui_do_color_tooltip_hsva(hsva);
   }
@@ -587,12 +587,12 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(rgba)
     UI_PrefWidth(ui_px(dim.y, 1.f))
     {
       UI_Signal sv_sig = ui_sat_val_pickerf(hsva.x, &hsva.y, &hsva.z, "sat_val_picker");
-      commit = commit || sv_sig.released;
+      commit = commit || ui_released(sv_sig);
     }
     UI_PrefWidth(ui_em(3.f, 1.f))
     {
       UI_Signal h_sig  = ui_hue_pickerf(&hsva.x, hsva.y, hsva.z, "hue_picker");
-      commit = commit || h_sig.released;
+      commit = commit || ui_released(h_sig);
     }
     UI_PrefWidth(ui_children_sum(1)) UI_Column UI_PrefWidth(ui_text_dim(10, 1)) UI_Font(df_font_from_slot(DF_FontSlot_Code)) UI_TextColor(df_rgba_from_theme_color(DF_ThemeColor_WeakText))
     {
@@ -675,7 +675,7 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(text)
   state->last_open_frame_idx = df_frame_index();
   {
     //- rjf: unpack params
-    DF_TxtTopologyInfo top = df_view_rule_hooks__txt_topology_info_from_cfg(dbgi_scope, ctrl_ctx, parse_ctx, cfg);
+    DF_TxtTopologyInfo top = df_view_rule_hooks__txt_topology_info_from_cfg(dbgi_scope, ctrl_ctx, parse_ctx, macro_map, cfg);
     
     //- rjf: resolve to address value & range
     DF_Eval value_eval = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, eval);
@@ -700,7 +700,7 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(text)
     }
     
     //- rjf: address range -> hash
-    U128 hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, vaddr_range, 1);
+    U128 hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, vaddr_range, 1, 0);
     
     //- rjf: hash -> data
     String8 data = hs_data_from_hash(hs_scope, hash);
@@ -846,7 +846,7 @@ DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_DEF(bitmap)
 {
   DF_Eval value_eval = df_value_mode_eval_from_eval(parse_ctx->type_graph, parse_ctx->rdbg, ctrl_ctx, eval);
   U64 base_vaddr = value_eval.imm_u64 ? value_eval.imm_u64 : value_eval.offset;
-  DF_BitmapTopologyInfo topology = df_view_rule_hooks__bitmap_topology_info_from_cfg(scope, ctrl_ctx, parse_ctx, cfg);
+  DF_BitmapTopologyInfo topology = df_view_rule_hooks__bitmap_topology_info_from_cfg(scope, ctrl_ctx, parse_ctx, macro_map, cfg);
   U64 expected_size = topology.width*topology.height*r_tex2d_format_bytes_per_pixel_table[topology.fmt];
   UI_Font(df_font_from_slot(DF_FontSlot_Code)) UI_TextColor(df_rgba_from_theme_color(DF_ThemeColor_WeakText))
     ui_labelf("0x%I64x -> Bitmap (%I64u x %I64u)", base_vaddr, topology.width, topology.height);
@@ -873,7 +873,7 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(bitmap)
   DF_Entity *process = df_entity_ancestor_from_kind(thread, DF_EntityKind_Process);
   
   //- rjf: unpack image dimensions & form vaddr range
-  DF_BitmapTopologyInfo topology_info = df_view_rule_hooks__bitmap_topology_info_from_cfg(dbgi_scope, ctrl_ctx, parse_ctx, cfg);
+  DF_BitmapTopologyInfo topology_info = df_view_rule_hooks__bitmap_topology_info_from_cfg(dbgi_scope, ctrl_ctx, parse_ctx, macro_map, cfg);
   U64 expected_size = topology_info.width*topology_info.height*r_tex2d_format_bytes_per_pixel_table[topology_info.fmt];
   Rng1U64 vaddr_range = r1u64(base_vaddr, base_vaddr+expected_size);
   
@@ -891,7 +891,7 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(bitmap)
   }
   
   //- rjf: address range -> hash
-  U128 hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, vaddr_range, 0);
+  U128 hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, vaddr_range, 0, 0);
   
   //- rjf: hash & topology -> texture
   TEX_Topology topology = tex_topology_make(v2s32((S32)topology_info.width, (S32)topology_info.height), topology_info.fmt);
@@ -916,7 +916,7 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(bitmap)
       draw_data->texture = texture;
       draw_data->src = r2f32(v2f32(0, 0), v2f32((F32)topology_info.width, (F32)topology_info.height));
       draw_data->loaded_t = state->loaded_t;
-      draw_data->hovered = sig.hovering;
+      draw_data->hovered = ui_hovering(sig);
       draw_data->mouse_px = mouse_bitmap_px_off;
       draw_data->ui_per_bmp_px = ui_per_bmp_px;
       ui_box_equip_custom_draw(box, df_view_rule_hooks__bitmap_box_draw, draw_data);
@@ -933,7 +933,11 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(bitmap)
           df_gfx_request_frame();
         }
       }
-      if(sig.hovering)
+      if(ui_hovering(sig) && r_handle_match(texture, r_handle_zero())) UI_Tooltip
+      {
+        ui_labelf("Texture not loaded.");
+      }
+      if(ui_hovering(sig) && !r_handle_match(texture, r_handle_zero()))
       {
         if(dim.y > (F32)topology_info.height)
         {
@@ -1112,7 +1116,7 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(geo)
   U64 base_vaddr = value_eval.imm_u64 ? value_eval.imm_u64 : value_eval.offset;
   
   //- rjf: extract extra geo topology info from view rule
-  DF_GeoTopologyInfo top = df_view_rule_hooks__geo_topology_info_from_cfg(dbgi_scope, ctrl_ctx, parse_ctx, cfg);
+  DF_GeoTopologyInfo top = df_view_rule_hooks__geo_topology_info_from_cfg(dbgi_scope, ctrl_ctx, parse_ctx, macro_map, cfg);
   Rng1U64 index_buffer_vaddr_range = r1u64(base_vaddr, base_vaddr+top.index_count*sizeof(U32));
   Rng1U64 vertex_buffer_vaddr_range = top.vertices_vaddr_range;
   
@@ -1147,8 +1151,8 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(geo)
   }
   
   //- rjf: address range -> hash
-  U128 index_buffer_hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, index_buffer_vaddr_range, 0);
-  U128 vertex_buffer_hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, vertex_buffer_vaddr_range, 0);
+  U128 index_buffer_hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, index_buffer_vaddr_range, 0, 0);
+  U128 vertex_buffer_hash = ctrl_stored_hash_from_process_vaddr_range(process->ctrl_machine_id, process->ctrl_handle, vertex_buffer_vaddr_range, 0, 0);
   
   //- rjf: get gpu buffers
   R_Handle index_buffer = geo_buffer_from_key_hash(geo_scope, index_buffer_key, index_buffer_hash);
@@ -1165,9 +1169,9 @@ DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(geo)
     {
       UI_Box *box = ui_build_box_from_stringf(UI_BoxFlag_DrawBorder|UI_BoxFlag_DrawBackground|UI_BoxFlag_Clickable, "geo_box");
       UI_Signal sig = ui_signal_from_box(box);
-      if(sig.dragging)
+      if(ui_dragging(sig))
       {
-        if(sig.pressed)
+        if(ui_pressed(sig))
         {
           Vec2F32 data = v2f32(state->yaw_target, state->pitch_target);
           ui_store_drag_struct(&data);

@@ -57,6 +57,7 @@ typedef struct CONS_RootParams{
   U32 bucket_count_scopes;
   U32 bucket_count_locals;
   U32 bucket_count_types;
+  U64 bucket_count_type_constructs;
 } CONS_RootParams;
 
 static CONS_Root* cons_root_new(CONS_RootParams *params);
@@ -483,7 +484,9 @@ typedef struct CONS__NameMapNode{
 } CONS__NameMapNode;
 
 typedef struct CONS__NameMap{
-  CONS__NameMapNode *buckets[1<<24];
+  CONS__NameMapNode **buckets;
+  U64 buckets_count;
+  U64 bucket_collision_count;
   CONS__NameMapNode *first;
   CONS__NameMapNode *last;
   U64 name_count;
@@ -497,13 +500,16 @@ static void           cons__name_map_add_pair(CONS_Root *root, CONS__NameMap *ma
 // u64 to ptr map
 typedef struct CONS__U64ToPtrNode{
   struct CONS__U64ToPtrNode *next;
-  U64 key[3];
-  void *ptr[3];
+  U64 _padding_;
+  U64 key[1];
+  void *ptr[1];
 } CONS__U64ToPtrNode;
 
 typedef struct CONS__U64ToPtrMap{
   CONS__U64ToPtrNode **buckets;
-  U64 bucket_count;
+  U64 buckets_count;
+  U64 bucket_collision_count;
+  U64 pair_count;
 } CONS__U64ToPtrMap;
 
 typedef struct CONS__U64ToPtrLookup{
@@ -514,8 +520,8 @@ typedef struct CONS__U64ToPtrLookup{
 
 static void cons__u64toptr_init(Arena *arena, CONS__U64ToPtrMap *map, U64 bucket_count);
 
-static void cons__u64toptr_lookup(CONS__U64ToPtrMap *map, U64 key, CONS__U64ToPtrLookup *lookup_out);
-static void cons__u64toptr_insert(Arena *arena, CONS__U64ToPtrMap *map, U64 key,
+static void cons__u64toptr_lookup(CONS__U64ToPtrMap *map, U64 key, U64 hash, CONS__U64ToPtrLookup *lookup_out);
+static void cons__u64toptr_insert(Arena *arena, CONS__U64ToPtrMap *map, U64 key, U64 hash,
                                   CONS__U64ToPtrLookup *lookup, void *ptr);
 
 
@@ -529,9 +535,13 @@ typedef struct CONS__Str8ToPtrNode{
 } CONS__Str8ToPtrNode;
 
 typedef struct CONS__Str8ToPtrMap{
-  CONS__Str8ToPtrNode *buckets[1<<24];
+  CONS__Str8ToPtrNode **buckets;
+  U64 buckets_count;
+  U64 bucket_collision_count;
+  U64 pair_count;
 } CONS__Str8ToPtrMap;
 
+static void cons__str8toptr_init(Arena *arena, CONS__Str8ToPtrMap *map, U64 bucket_count);
 static void*cons__str8toptr_lookup(CONS__Str8ToPtrMap *map, String8 key, U64 hash);
 static void cons__str8toptr_insert(Arena *arena, CONS__Str8ToPtrMap *map,
                                    String8 key, U64 hash, void *ptr);
@@ -640,7 +650,9 @@ typedef struct CONS__StringNode{
 typedef struct CONS__Strings{
   CONS__StringNode *order_first;
   CONS__StringNode *order_last;
-  CONS__StringNode *buckets[1<<24];
+  CONS__StringNode **buckets;
+  U64 buckets_count;
+  U64 bucket_collision_count;
   U32 count;
 } CONS__Strings;
 
@@ -657,7 +669,9 @@ typedef struct CONS__IdxRunNode{
 typedef struct CONS__IdxRuns{
   CONS__IdxRunNode *order_first;
   CONS__IdxRunNode *order_last;
-  CONS__IdxRunNode *buckets[1<<24];
+  CONS__IdxRunNode **buckets;
+  U64 buckets_count;
+  U64 bucket_collision_count;
   U32 count;
   U32 idx_count;
 } CONS__IdxRuns;
@@ -788,7 +802,8 @@ typedef struct CONS__SrcLineMapVoffBlock{
 } CONS__SrcLineMapVoffBlock;
 
 typedef struct CONS__SrcLineMapBucket{
-  struct CONS__SrcLineMapBucket *next;
+  struct CONS__SrcLineMapBucket *order_next;
+  struct CONS__SrcLineMapBucket *hash_next;
   U32 line_num;
   CONS__SrcLineMapVoffBlock *first_voff_block;
   CONS__SrcLineMapVoffBlock *last_voff_block;

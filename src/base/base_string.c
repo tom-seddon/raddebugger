@@ -542,42 +542,6 @@ try_s64_from_str8_c_rules(String8 string, S64 *x){
 }
 
 //- rjf: string -> integer (base64 & base16)
-
-internal U64
-base64_size_from_data_size(U64 size_in_bytes){
-  U64 bits = size_in_bytes*8;
-  U64 base64_size = (bits + 5)/6;
-  return(base64_size);
-}
-
-internal U64
-base64_from_data(U8 *dst, U8 *src, U64 src_size){
-  U8 *dst_base = dst;
-  U8 *opl = src + src_size;
-  U32 bit_num = 0;
-  if (src < opl){
-    U8 byte = *src;
-    for (;;){
-      U32 x = 0;
-      for (U32 i = 0; i < 6; i += 1){
-        x |= ((byte >> bit_num) & 1) << i;
-        bit_num += 1;
-        if (bit_num == 8){
-          bit_num = 0;
-          src += 1;
-          byte = (src < opl)?(*src):0;
-        }
-      }
-      *dst = base64[x];
-      dst += 1;
-      if (src >= opl){
-        break;
-      }
-    }
-  }
-  return(dst - dst_base);
-}
-
 internal U64
 base16_size_from_data_size(U64 size_in_bytes){
   U64 base16_size = size_in_bytes*2;
@@ -1404,7 +1368,7 @@ utf8_encode(U8 *str, U32 codepoint){
     inc = 3;
   }
   else if (codepoint <= 0x10FFFF){
-    str[0] = (bitmask4 << 3) | ((codepoint >> 18) & bitmask3);
+    str[0] = (bitmask4 << 4) | ((codepoint >> 18) & bitmask3);
     str[1] = bit8 | ((codepoint >> 12) & bitmask6);
     str[2] = bit8 | ((codepoint >>  6) & bitmask6);
     str[3] = bit8 | ( codepoint        & bitmask6);

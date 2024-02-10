@@ -168,7 +168,8 @@ enum
   DF_ViewSpecFlag_CanSerialize               = (1<<1),
   DF_ViewSpecFlag_CanSerializeEntityPath     = (1<<2),
   DF_ViewSpecFlag_CanFilter                  = (1<<3),
-  DF_ViewSpecFlag_TypingAutomaticallyFilters = (1<<4),
+  DF_ViewSpecFlag_FilterIsCode               = (1<<4),
+  DF_ViewSpecFlag_TypingAutomaticallyFilters = (1<<5),
 };
 
 typedef struct DF_ViewSpecInfo DF_ViewSpecInfo;
@@ -355,11 +356,11 @@ enum
 #define DF_GFX_VIEW_RULE_LINE_STRINGIZE_FUNCTION_NAME(name) df_gfx_view_rule_line_stringize__##name
 #define DF_GFX_VIEW_RULE_LINE_STRINGIZE_FUNCTION_DEF(name) internal DF_GFX_VIEW_RULE_LINE_STRINGIZE_FUNCTION_SIG(DF_GFX_VIEW_RULE_LINE_STRINGIZE_FUNCTION_NAME(name))
 
-#define DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_SIG(name) void name(DF_ExpandKey key, DF_Eval eval, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, struct DF_CfgNode *cfg)
+#define DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_SIG(name) void name(DF_ExpandKey key, DF_Eval eval, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, struct DF_CfgNode *cfg)
 #define DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_NAME(name) df_gfx_view_rule_row_ui__##name
 #define DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_DEF(name) DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_SIG(DF_GFX_VIEW_RULE_ROW_UI_FUNCTION_NAME(name))
 
-#define DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_SIG(name) void name(struct DF_Window *ws, DF_ExpandKey key, DF_Eval eval, DBGI_Scope *dbgi_scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, struct DF_CfgNode *cfg, Vec2F32 dim)
+#define DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_SIG(name) void name(struct DF_Window *ws, DF_ExpandKey key, DF_Eval eval, DBGI_Scope *dbgi_scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, struct DF_CfgNode *cfg, Vec2F32 dim)
 #define DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_NAME(name) df_gfx_view_rule_block_ui__##name
 #define DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_DEF(name) DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_SIG(DF_GFX_VIEW_RULE_BLOCK_UI_FUNCTION_NAME(name))
 
@@ -689,7 +690,6 @@ struct DF_GfxState
   
   // rjf: frame request state
   U64 num_frames_requested;
-  U64 last_time_mousemoved_us;
   
   // rjf: history cache
   DF_StateDeltaHistory *hist;
@@ -962,7 +962,7 @@ internal void df_window_update_and_render(Arena *arena, OS_EventList *events, DF
 
 internal String8 df_eval_escaped_from_raw_string(Arena *arena, String8 raw);
 internal String8List df_single_line_eval_value_strings_from_eval(Arena *arena, DF_EvalVizStringFlags flags, TG_Graph *graph, RADDBG_Parsed *rdbg, DF_CtrlCtx *ctrl_ctx, U32 default_radix, F_Tag font, F32 font_size, F32 max_size, S32 depth, DF_Eval eval, TG_Member *opt_member, DF_CfgTable *cfg_table);
-internal DF_EvalVizWindowedRowList df_eval_viz_windowed_row_list_from_viz_block_list(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_EvalView *eval_view, U32 default_radix, F_Tag font, F32 font_size, Rng1S64 visible_range, DF_EvalVizBlockList *blocks);
+internal DF_EvalVizWindowedRowList df_eval_viz_windowed_row_list_from_viz_block_list(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_EvalView *eval_view, U32 default_radix, F_Tag font, F32 font_size, Rng1S64 visible_range, DF_EvalVizBlockList *blocks);
 
 ////////////////////////////////
 //~ rjf: Hover Eval
@@ -1026,10 +1026,10 @@ internal void df_cmd_binding_button(DF_CmdSpec *spec);
 internal UI_Signal df_menu_bar_button(String8 string);
 internal UI_Signal df_cmd_spec_button(DF_CmdSpec *spec);
 internal void df_cmd_list_menu_buttons(DF_Window *ws, U64 count, DF_CoreCmdKind *cmds, U32 *fastpath_codepoints);
-internal UI_Signal df_icon_button(DF_IconKind kind, String8 string);
-internal UI_Signal df_icon_buttonf(DF_IconKind kind, char *fmt, ...);
+internal UI_Signal df_icon_button(DF_IconKind kind, FuzzyMatchRangeList *matches, String8 string);
+internal UI_Signal df_icon_buttonf(DF_IconKind kind, FuzzyMatchRangeList *matches, char *fmt, ...);
 internal void df_entity_tooltips(DF_Entity *entity);
-internal void df_entity_desc_button(DF_Window *ws, DF_Entity *entity);
+internal void df_entity_desc_button(DF_Window *ws, DF_Entity *entity, FuzzyMatchRangeList *name_matches, String8 fuzzy_query);
 internal void df_entity_src_loc_button(DF_Window *ws, DF_Entity *entity, TxtPt point);
 
 ////////////////////////////////

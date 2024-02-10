@@ -123,6 +123,9 @@ pdb_convert_params_from_cmd_line(Arena *arena, CmdLine *cmdline){
         else if (str8_match(node->string, str8_lit("contributions"), 0)){
           result->dump_contributions = 1;
         }
+        else if (str8_match(node->string, str8_lit("table_diagnostics"), 0)){
+          result->dump_table_diagnostics = 1;
+        }
       }
     }
   }
@@ -133,24 +136,40 @@ pdb_convert_params_from_cmd_line(Arena *arena, CmdLine *cmdline){
 ////////////////////////////////
 //~ PDB Type & Symbol Info Translation Helpers
 
-//- pdb types and symbols
+//- rjf: pdb conversion context creation
 
-static void
-pdbconv_types_and_symbols(PDBCONV_TypesSymbolsParams *params, CONS_Root *out_root){
-  ProfBeginFunction();
-  Temp scratch = scratch_begin(0, 0);
-  
-  // setup a pdb conversion context
-  PDBCONV_Ctx *pdb_ctx = push_array(scratch.arena, PDBCONV_Ctx, 1);
-  pdb_ctx->arch = params->architecture;
-  // TODO(allen): actually infer addr_size from arch
-  pdb_ctx->addr_size = 8;
+static PDBCONV_Ctx *
+pdbconv_ctx_alloc(PDBCONV_CtxParams *params, CONS_Root *out_root)
+{
+  Arena *arena = arena_alloc();
+  PDBCONV_Ctx *pdb_ctx = push_array(arena, PDBCONV_Ctx, 1);
+  pdb_ctx->arena = arena;
+  pdb_ctx->arch = params->arch;
+  pdb_ctx->addr_size = raddbg_addr_size_from_arch(pdb_ctx->arch);
   pdb_ctx->hash = params->tpi_hash;
   pdb_ctx->leaf = params->tpi_leaf;
   pdb_ctx->sections = params->sections->sections;
   pdb_ctx->section_count = params->sections->count;
   pdb_ctx->root = out_root;
-  pdb_ctx->temp_arena = arena_alloc();
+#define BKTCOUNT(x) ((x)?(u64_up_to_pow2(x)):(4096))
+  pdb_ctx->fwd_map.buckets_count        = BKTCOUNT(params->fwd_map_bucket_count);
+  pdb_ctx->frame_proc_map.buckets_count = BKTCOUNT(params->frame_proc_map_bucket_count);
+  pdb_ctx->known_globals.buckets_count  = BKTCOUNT(params->known_global_map_bucket_count);
+  pdb_ctx->link_names.buckets_count     = BKTCOUNT(params->link_name_map_bucket_count);
+#undef BKTCOUNT
+  pdb_ctx->fwd_map.buckets = push_array(pdb_ctx->arena, PDBCONV_FwdNode *, pdb_ctx->fwd_map.buckets_count);
+  pdb_ctx->frame_proc_map.buckets = push_array(pdb_ctx->arena, PDBCONV_FrameProcNode *, pdb_ctx->frame_proc_map.buckets_count);
+  pdb_ctx->known_globals.buckets = push_array(pdb_ctx->arena, PDBCONV_KnownGlobalNode *, pdb_ctx->known_globals.buckets_count);
+  pdb_ctx->link_names.buckets = push_array(pdb_ctx->arena, PDBCONV_LinkNameNode *, pdb_ctx->link_names.buckets_count);
+  return pdb_ctx;
+}
+
+//- pdb types and symbols
+
+static void
+pdbconv_types_and_symbols(PDBCONV_Ctx *pdb_ctx, PDBCONV_TypesSymbolsParams *params)
+{
+  ProfBeginFunction();
   
   // convert types
   pdbconv_type_cons_main_passes(pdb_ctx);
@@ -164,7 +183,6 @@ pdbconv_types_and_symbols(PDBCONV_TypesSymbolsParams *params, CONS_Root *out_roo
     pdbconv_symbol_cons(pdb_ctx, unit_sym, 1 + i);
   }
   
-  scratch_end(scratch);
   ProfEnd();
 }
 
@@ -248,6 +266,7 @@ pdbconv_type_cons_main_passes(PDBCONV_Ctx *ctx){
 
 static CV_TypeId
 pdbconv_type_resolve_fwd(PDBCONV_Ctx *ctx, CV_TypeId itype){
+  ProfBeginFunction();
   Assert(ctx->leaf->itype_first <= itype && itype < ctx->leaf->itype_opl);
   
   CV_TypeId result = 0;
@@ -388,9 +407,10 @@ pdbconv_type_resolve_fwd(PDBCONV_Ctx *ctx, CV_TypeId itype){
   
   // save in map
   if (result != 0){
-    pdbconv_type_fwd_map_set(ctx->temp_arena, &ctx->fwd_map, itype, result);
+    pdbconv_type_fwd_map_set(ctx->arena, &ctx->fwd_map, itype, result);
   }
   
+  ProfEnd();
   return(result);
 }
 
@@ -1383,7 +1403,7 @@ pdbconv_type_cons_leaf_record(PDBCONV_Ctx *ctx, CV_TypeId itype){
             
             // remember to revisit this for members
             {
-              PDBCONV_TypeRev *rev = push_array(ctx->temp_arena, PDBCONV_TypeRev, 1);
+              PDBCONV_TypeRev *rev = push_array(ctx->arena, PDBCONV_TypeRev, 1);
               rev->owner_type = result;
               rev->field_itype = lf_struct->field_itype;
               SLLQueuePush(ctx->member_revisit_first, ctx->member_revisit_last, rev);
@@ -1436,7 +1456,7 @@ pdbconv_type_cons_leaf_record(PDBCONV_Ctx *ctx, CV_TypeId itype){
             
             // remember to revisit this for members
             {
-              PDBCONV_TypeRev *rev = push_array(ctx->temp_arena, PDBCONV_TypeRev, 1);
+              PDBCONV_TypeRev *rev = push_array(ctx->arena, PDBCONV_TypeRev, 1);
               rev->owner_type = result;
               rev->field_itype = lf_struct->field_itype;
               SLLQueuePush(ctx->member_revisit_first, ctx->member_revisit_last, rev);
@@ -1476,7 +1496,7 @@ pdbconv_type_cons_leaf_record(PDBCONV_Ctx *ctx, CV_TypeId itype){
             
             // remember to revisit this for members
             {
-              PDBCONV_TypeRev *rev = push_array(ctx->temp_arena, PDBCONV_TypeRev, 1);
+              PDBCONV_TypeRev *rev = push_array(ctx->arena, PDBCONV_TypeRev, 1);
               rev->owner_type = result;
               rev->field_itype = lf_union->field_itype;
               SLLQueuePush(ctx->member_revisit_first, ctx->member_revisit_last, rev);
@@ -1511,7 +1531,7 @@ pdbconv_type_cons_leaf_record(PDBCONV_Ctx *ctx, CV_TypeId itype){
             
             // remember to revisit this for enumerates
             {
-              PDBCONV_TypeRev *rev = push_array(ctx->temp_arena, PDBCONV_TypeRev, 1);
+              PDBCONV_TypeRev *rev = push_array(ctx->arena, PDBCONV_TypeRev, 1);
               rev->owner_type = result;
               rev->field_itype = lf_enum->field_itype;
               SLLQueuePush(ctx->enum_revisit_first, ctx->enum_revisit_last, rev);
@@ -1733,7 +1753,7 @@ pdbconv_type_from_name(PDBCONV_Ctx *ctx, String8 name){
 
 static void
 pdbconv_type_fwd_map_set(Arena *arena, PDBCONV_FwdMap *map, CV_TypeId key, CV_TypeId val){
-  U64 bucket_idx = key%ArrayCount(map->buckets);
+  U64 bucket_idx = key%map->buckets_count;
   
   // search for an existing match
   PDBCONV_FwdNode *match = 0;
@@ -1751,6 +1771,8 @@ pdbconv_type_fwd_map_set(Arena *arena, PDBCONV_FwdMap *map, CV_TypeId key, CV_Ty
     match = push_array(arena, PDBCONV_FwdNode, 1);
     SLLStackPush(map->buckets[bucket_idx], match);
     match->key = key;
+    map->pair_count += 1;
+    map->bucket_collision_count += (match->next != 0);
   }
   
   // set node's val
@@ -1760,7 +1782,7 @@ pdbconv_type_fwd_map_set(Arena *arena, PDBCONV_FwdMap *map, CV_TypeId key, CV_Ty
 static CV_TypeId
 pdbconv_type_fwd_map_get(PDBCONV_FwdMap *map, CV_TypeId key){
   ProfBeginFunction();
-  U64 bucket_idx = key%ArrayCount(map->buckets);
+  U64 bucket_idx = key%map->buckets_count;
   
   // search for an existing match
   PDBCONV_FwdNode *match = 0;
@@ -1876,10 +1898,12 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
       }
       
       CV_SymKind kind = rec_range->hdr.kind; 
-      switch (kind){
-        default:break;
+      switch(kind)
+      {
+        default:{}break;
         
         case CV_SymKind_END:
+        ProfScope("CV_SymKind_END")
         {
           // pop scope stack
           pdbconv_symbol_pop_scope(ctx);
@@ -1888,6 +1912,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_FRAMEPROC:
+        ProfScope("CV_SymKind_FRAMEPROC")
         {
           if (sizeof(CV_SymFrameproc) > cap){
             // TODO(allen): error
@@ -1898,6 +1923,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_BLOCK32:
+        ProfScope("CV_SymKind_BLOCK32")
         {
           if (sizeof(CV_SymBlock32) > cap){
             // TODO(allen): error
@@ -1923,6 +1949,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         
         case CV_SymKind_LDATA32:
         case CV_SymKind_GDATA32:
+        ProfScope("CV_SymKind_LDATA32/CV_SymKind_GDATA32")
         {
           if (sizeof(CV_SymData32) > cap){
             // TODO(allen): error
@@ -1942,7 +1969,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
             // * different symbol streams so we deduplicate across the
             // * entire translation context.
             if (!pdbconv_known_global_lookup(&ctx->known_globals, name, voff)){
-              pdbconv_known_global_insert(ctx->temp_arena, &ctx->known_globals, name, voff);
+              pdbconv_known_global_insert(ctx->arena, &ctx->known_globals, name, voff);
               
               // type of variable
               CONS_Type *type = pdbconv_type_resolve_itype(ctx, data32->itype);
@@ -1984,6 +2011,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         
         case CV_SymKind_LPROC32:
         case CV_SymKind_GPROC32:
+        ProfScope("CV_SymKind_LPROC32/CV_SymKind_GPROC32")
         {
           if (sizeof(CV_SymProc32) > cap){
             // TODO(allen): error
@@ -2061,6 +2089,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_REGREL32:
+        ProfScope("CV_SymKind_REGREL32")
         {
           if (sizeof(CV_SymRegrel32) > cap){
             // TODO(allen): error
@@ -2159,6 +2188,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         
         case CV_SymKind_LTHREAD32:
         case CV_SymKind_GTHREAD32:
+        ProfScope("CV_SymKind_LTHREAD32/CV_SymKind_GTHREAD32")
         {
           if (sizeof(CV_SymThread32) > cap){
             // TODO(allen): error
@@ -2210,6 +2240,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_LOCAL:
+        ProfScope("CV_SymKind_LOCAL")
         {
           if (sizeof(CV_SymLocal) > cap){
             // TODO(allen): error
@@ -2248,13 +2279,15 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
               // emit local
               U64 user_id = user_id_base + off;
               CONS_Local *local_var = cons_local_handle_from_user_id(ctx->root, user_id);
+              local_var->kind = local_kind;
+              local_var->name = name;
+              local_var->type = type;
               
               CONS_LocalInfo info = {0};
               info.kind = local_kind;
               info.scope = current_scope;
               info.name = name;
               info.type = type;
-              
               cons_local_set_basic_info(ctx->root, local_var, &info);
               
               defrange_target = cons_location_set_from_local(ctx->root, local_var);
@@ -2264,6 +2297,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_DEFRANGE_REGISTER:
+        ProfScope("CV_SymKind_DEFRANGE_REGISTER")
         {
           if (sizeof(CV_SymDefrangeRegister) > cap){
             // TODO(allen): error
@@ -2296,6 +2330,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_DEFRANGE_FRAMEPOINTER_REL:
+        ProfScope("CV_SymKind_DEFRANGE_FRAMEPOINTER_REL")
         {
           if (sizeof(CV_SymDefrangeFramepointerRel) > cap){
             // TODO(allen): error
@@ -2335,6 +2370,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_DEFRANGE_SUBFIELD_REGISTER:
+        ProfScope("CV_SymKind_DEFRANGE_SUBFIELD_REGISTER")
         {
           if (sizeof(CV_SymDefrangeSubfieldRegister) > cap){
             // TODO(allen): error
@@ -2371,6 +2407,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_DEFRANGE_FRAMEPOINTER_REL_FULL_SCOPE:
+        ProfScope("CV_SymKind_DEFRANGE_FRAMEPOINTER_REL_FULL_SCOPE")
         {
           if (sizeof(CV_SymDefrangeFramepointerRelFullScope) > cap){
             // TODO(allen): error
@@ -2406,6 +2443,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_DEFRANGE_REGISTER_REL:
+        ProfScope("CV_SymKind_DEFRANGE_REGISTER_REL")
         {
           if (sizeof(CV_SymDefrangeRegisterRel) > cap){
             // TODO(allen): error
@@ -2447,6 +2485,7 @@ pdbconv_symbol_cons(PDBCONV_Ctx *ctx, CV_SymParsed *sym, U32 sym_unique_id){
         }break;
         
         case CV_SymKind_FILESTATIC:
+        ProfScope("CV_SymKind_FILESTATIC")
         {
           if (sizeof(CV_SymFileStatic) > cap){
             // TODO(allen): error
@@ -2529,7 +2568,7 @@ pdbconv_gather_link_names(PDBCONV_Ctx *ctx, CV_SymParsed *sym){
           }
           
           // save link name
-          pdbconv_link_name_save(ctx->temp_arena, &ctx->link_names, voff, name);
+          pdbconv_link_name_save(ctx->arena, &ctx->link_names, voff, name);
         }
       }break;
     }
@@ -2541,9 +2580,10 @@ pdbconv_gather_link_names(PDBCONV_Ctx *ctx, CV_SymParsed *sym){
 
 static void
 pdbconv_symbol_frame_proc_write(PDBCONV_Ctx *ctx,CONS_Symbol *key,PDBCONV_FrameProcData *data){
+  ProfBeginFunction();
   U64 key_int = IntFromPtr(key);
   PDBCONV_FrameProcMap *map = &ctx->frame_proc_map;
-  U32 bucket_idx = key_int%ArrayCount(map->buckets);
+  U32 bucket_idx = key_int%map->buckets_count;
   
   // find match
   PDBCONV_FrameProcNode *match = 0;
@@ -2563,18 +2603,22 @@ pdbconv_symbol_frame_proc_write(PDBCONV_Ctx *ctx,CONS_Symbol *key,PDBCONV_FrameP
   
   // insert new association if no match
   if (match == 0){
-    match = push_array(ctx->temp_arena, PDBCONV_FrameProcNode, 1);
+    match = push_array(ctx->arena, PDBCONV_FrameProcNode, 1);
     SLLStackPush(map->buckets[bucket_idx], match);
     match->key = key;
     MemoryCopyStruct(&match->data, data);
+    map->pair_count += 1;
+    map->bucket_collision_count += (match->next != 0);
   }
+  ProfEnd();
 }
 
 static PDBCONV_FrameProcData*
 pdbconv_symbol_frame_proc_read(PDBCONV_Ctx *ctx, CONS_Symbol *key){
+  ProfBeginFunction();
   U64 key_int = IntFromPtr(key);
   PDBCONV_FrameProcMap *map = &ctx->frame_proc_map;
-  U32 bucket_idx = key_int%ArrayCount(map->buckets);
+  U32 bucket_idx = key_int%map->buckets_count;
   
   // find match
   PDBCONV_FrameProcData *result = 0;
@@ -2587,6 +2631,7 @@ pdbconv_symbol_frame_proc_read(PDBCONV_Ctx *ctx, CONS_Symbol *key){
     }
   }
   
+  ProfEnd();
   return(result);
 }
 
@@ -2595,7 +2640,7 @@ static void
 pdbconv_symbol_push_scope(PDBCONV_Ctx *ctx, CONS_Scope *scope, CONS_Symbol *symbol){
   PDBCONV_ScopeNode *node = ctx->scope_node_free;
   if (node == 0){
-    node = push_array(ctx->temp_arena, PDBCONV_ScopeNode, 1);
+    node = push_array(ctx->arena, PDBCONV_ScopeNode, 1);
   }
   else{
     SLLStackPop(ctx->scope_node_free);
@@ -2661,8 +2706,9 @@ pdbconv_known_global_hash(String8 name, U64 voff){
 
 static B32
 pdbconv_known_global_lookup(PDBCONV_KnownGlobalSet *set, String8 name, U64 voff){
+  ProfBeginFunction();
   U64 hash = pdbconv_known_global_hash(name, voff);
-  U64 bucket_idx = hash%ArrayCount(set->buckets);
+  U64 bucket_idx = hash%set->buckets_count;
   
   PDBCONV_KnownGlobalNode *match = 0;
   for (PDBCONV_KnownGlobalNode *node = set->buckets[bucket_idx];
@@ -2677,13 +2723,15 @@ pdbconv_known_global_lookup(PDBCONV_KnownGlobalSet *set, String8 name, U64 voff)
   }
   
   B32 result = (match != 0);
+  ProfEnd();
   return(result);
 }
 
 static void
 pdbconv_known_global_insert(Arena *arena, PDBCONV_KnownGlobalSet *set, String8 name, U64 voff){
+  ProfBeginFunction();
   U64 hash = pdbconv_known_global_hash(name, voff);
-  U64 bucket_idx = hash%ArrayCount(set->buckets);
+  U64 bucket_idx = hash%set->buckets_count;
   
   PDBCONV_KnownGlobalNode *match = 0;
   for (PDBCONV_KnownGlobalNode *node = set->buckets[bucket_idx];
@@ -2703,7 +2751,10 @@ pdbconv_known_global_insert(Arena *arena, PDBCONV_KnownGlobalSet *set, String8 n
     node->key_name = push_str8_copy(arena, name);
     node->key_voff = voff;
     node->hash = hash;
+    set->global_count += 1;
+    set->bucket_collision_count += (node->next != 0);
   }
+  ProfEnd();
 }
 
 // location info helpers
@@ -2715,6 +2766,7 @@ pdbconv_location_from_addr_reg_off(PDBCONV_Ctx *ctx,
                                    U32 reg_byte_pos,
                                    S64 offset,
                                    B32 extra_indirection){
+  ProfBeginFunction();
   CONS_Location *result = 0;
   if (0 <= offset && offset <= (S64)max_U16){
     if (extra_indirection){
@@ -2725,7 +2777,7 @@ pdbconv_location_from_addr_reg_off(PDBCONV_Ctx *ctx,
     }
   }
   else{
-    Arena *arena = ctx->temp_arena;
+    Arena *arena = ctx->arena;
     
     CONS_EvalBytecode bytecode = {0};
     U32 regread_param = RADDBG_EncodeRegReadParam(reg_code, reg_byte_size, reg_byte_pos);
@@ -2739,6 +2791,7 @@ pdbconv_location_from_addr_reg_off(PDBCONV_Ctx *ctx,
     result = cons_location_addr_bytecode_stream(ctx->root, &bytecode);
   }
   
+  ProfEnd();
   return(result);
 }
 
@@ -2843,18 +2896,21 @@ pdbconv_location_over_lvar_addr_range(PDBCONV_Ctx *ctx,
 static void
 pdbconv_link_name_save(Arena *arena, PDBCONV_LinkNameMap *map, U64 voff, String8 name){
   U64 hash = (voff >> 3) ^ ((7 & voff) << 6);
-  U64 bucket_idx = hash%ArrayCount(map->buckets);
+  U64 bucket_idx = hash%map->buckets_count;
   
   PDBCONV_LinkNameNode *node = push_array(arena, PDBCONV_LinkNameNode, 1);
   SLLStackPush(map->buckets[bucket_idx], node);
   node->voff = voff;
   node->name = push_str8_copy(arena, name);
+  map->link_name_count += 1;
+  map->bucket_collision_count += (node->next != 0);
 }
 
 static String8
 pdbconv_link_name_find(PDBCONV_LinkNameMap *map, U64 voff){
+  ProfBeginFunction();
   U64 hash = (voff >> 3) ^ ((7 & voff) << 6);
-  U64 bucket_idx = hash%ArrayCount(map->buckets);
+  U64 bucket_idx = hash%map->buckets_count;
   
   String8 result = {0};
   for (PDBCONV_LinkNameNode *node = map->buckets[bucket_idx];
@@ -2866,6 +2922,7 @@ pdbconv_link_name_find(PDBCONV_LinkNameMap *map, U64 voff){
     }
   }
   
+  ProfEnd();
   return(result);
 }
 
@@ -3092,6 +3149,236 @@ str8_list_pushf(arena, &out->errors, fmt, __VA_ARGS__);\
     exe_hash = raddbg_hash(params->input_exe_data.str, params->input_exe_data.size);
   }
   
+  // output generation
+  PDBCONV_Ctx *pdbconv_ctx = 0;
+  if (params->output_name.size > 0){
+    
+    // determine arch
+    RADDBG_Arch architecture = RADDBG_Arch_NULL;
+    // TODO(rjf): in some cases, the first compilation unit has a zero
+    // architecture, as it's sometimes used as a "nil" unit. this causes bugs
+    // in later stages of conversion - particularly, this was detected via
+    // busted location info. so i've converted this to a scan-until-we-find-an-
+    // architecture. however, this is still fundamentally insufficient, because
+    // Nick has informed me that x86 units can be linked with x64 units,
+    // meaning the appropriate architecture at any point in time is not a top-
+    // level concept, and is rather dependent on to which compilation unit
+    // particular symbols belong. so in the future, to support that (odd) case,
+    // we'll need to not only have this be a top-level "contextual" piece of
+    // info, but to use the appropriate compilation unit's architecture when
+    // possible.
+    //
+    for(U64 comp_unit_idx = 0; comp_unit_idx < comp_unit_count; comp_unit_idx += 1)
+    {
+      if(sym_for_unit[comp_unit_idx] != 0)
+      {
+        architecture = raddbg_arch_from_cv_arch(sym_for_unit[comp_unit_idx]->info.arch);
+        if(architecture != 0)
+        {
+          break;
+        }
+      }
+    }
+    U64 addr_size = raddbg_addr_size_from_arch(architecture);
+    
+    
+    // predict symbol counts
+    U64 symbol_count_prediction = 0;
+    {
+      U64 rec_range_count = 0;
+      if (sym != 0){
+        rec_range_count += sym->sym_ranges.count;
+      }
+      for (U64 i = 0; i < comp_unit_count; i += 1){
+        CV_SymParsed *unit_sym = sym_for_unit[i];
+        rec_range_count += unit_sym->sym_ranges.count;
+      }
+      symbol_count_prediction = rec_range_count/8;
+      if (symbol_count_prediction < 128){
+        symbol_count_prediction = 128;
+      }
+    }
+    
+    
+    // setup root
+    CONS_RootParams root_params = {0};
+    root_params.addr_size = addr_size;
+    
+    root_params.bucket_count_units = comp_unit_count;
+    root_params.bucket_count_symbols = symbol_count_prediction;
+    root_params.bucket_count_scopes = symbol_count_prediction;
+    root_params.bucket_count_locals = symbol_count_prediction;
+    root_params.bucket_count_types = tpi->itype_opl;
+    root_params.bucket_count_type_constructs = tpi->itype_opl;
+    
+    CONS_Root *root = cons_root_new(&root_params);
+    out->root = root;
+    
+    // top level info
+    {
+      // calculate voff max
+      U64 voff_max = 0;
+      {        
+        COFF_SectionHeader *coff_sec_ptr = coff_sections->sections;
+        COFF_SectionHeader *coff_ptr_opl = coff_sec_ptr + coff_section_count;
+        for (;coff_sec_ptr < coff_ptr_opl; coff_sec_ptr += 1){
+          U64 sec_voff_max = coff_sec_ptr->voff + coff_sec_ptr->vsize;
+          voff_max = Max(voff_max, sec_voff_max);
+        }
+      }
+      
+      // set top level info
+      CONS_TopLevelInfo tli = {0};
+      tli.architecture = architecture;
+      tli.exe_name = params->input_exe_name;
+      tli.exe_hash = exe_hash;
+      tli.voff_max = voff_max;
+      
+      cons_set_top_level_info(root, &tli);
+    }
+    
+    
+    // setup binary sections
+    {
+      COFF_SectionHeader *coff_ptr = coff_sections->sections;
+      COFF_SectionHeader *coff_opl = coff_ptr + coff_section_count;
+      for (;coff_ptr < coff_opl; coff_ptr += 1){
+        char *name_first = (char*)coff_ptr->name;
+        char *name_opl   = name_first + sizeof(coff_ptr->name);
+        String8 name = str8_cstring_capped(name_first, name_opl);
+        RADDBG_BinarySectionFlags flags =
+          raddbg_binary_section_flags_from_coff_section_flags(coff_ptr->flags);
+        cons_add_binary_section(root, name, flags,
+                                coff_ptr->voff, coff_ptr->voff + coff_ptr->vsize,
+                                coff_ptr->foff, coff_ptr->foff + coff_ptr->fsize);
+      }
+    }
+    
+    
+    // setup compilation units
+    {
+      PDB_CompUnit **units = comp_units->units;
+      for (U64 i = 0; i < comp_unit_count; i += 1){
+        PDB_CompUnit *unit = units[i];
+        CV_SymParsed *unit_sym = sym_for_unit[i];
+        CV_C13Parsed *unit_c13 = c13_for_unit[i];
+        
+        // resolve names
+        String8 raw_name = unit->obj_name;
+        
+        String8 unit_name = raw_name;
+        {
+          U64 first_after_slashes = 0;
+          for (S64 i = unit_name.size - 1; i >= 0; i -= 1){
+            if (unit_name.str[i] == '/' || unit_name.str[i] == '\\'){
+              first_after_slashes = i + 1;
+              break;
+            }
+          }
+          unit_name = str8_range(raw_name.str + first_after_slashes,
+                                 raw_name.str + raw_name.size);
+        }
+        
+        String8 obj_name = raw_name;
+        if (str8_match(obj_name, str8_lit("* Linker *"), 0) ||
+            str8_match(obj_name, str8_lit("Import:"),
+                       StringMatchFlag_RightSideSloppy)){
+          MemoryZeroStruct(&obj_name);
+        }
+        
+        String8 compiler_name = unit_sym->info.compiler_name;
+        String8 archive_file = unit->group_name;
+        
+        // extract langauge
+        RADDBG_Language lang = raddbg_language_from_cv_language(sym->info.language);
+        
+        // basic per unit info
+        CONS_Unit *unit_handle = cons_unit_handle_from_user_id(root, i);
+        
+        CONS_UnitInfo info = {0};
+        info.unit_name = unit_name;
+        info.compiler_name = compiler_name;
+        info.object_file = obj_name;
+        info.archive_file = archive_file;
+        info.language = lang;
+        
+        cons_unit_set_info(root, unit_handle, &info);
+        
+        // unit's line info
+        for (CV_C13SubSectionNode *node = unit_c13->first_sub_section;
+             node != 0;
+             node = node->next)
+        {
+          if(node->kind == CV_C13_SubSectionKind_Lines)
+          {
+            for(CV_C13LinesParsedNode *lines_n = node->lines_first;
+                lines_n != 0;
+                lines_n = lines_n->next)
+            {
+              CV_C13LinesParsed *lines = &lines_n->v;
+              CONS_LineSequence seq = {0};
+              seq.file_name  = lines->file_name;
+              seq.voffs      = lines->voffs;
+              seq.line_nums  = lines->line_nums;
+              seq.col_nums   = lines->col_nums;
+              seq.line_count = lines->line_count;
+              cons_unit_add_line_sequence(root, unit_handle, &seq);
+            }
+          }
+        }
+      }
+    }
+    
+    
+    // unit vmap ranges
+    {
+      PDB_CompUnitContribution *contrib_ptr = comp_unit_contributions->contributions;
+      PDB_CompUnitContribution *contrib_opl = contrib_ptr + comp_unit_contribution_count;
+      for (;contrib_ptr < contrib_opl; contrib_ptr += 1){
+        if (contrib_ptr->mod < root->unit_count){
+          CONS_Unit *unit_handle = cons_unit_handle_from_user_id(root, contrib_ptr->mod);
+          cons_unit_vmap_add_range(root, unit_handle,
+                                   contrib_ptr->voff_first,
+                                   contrib_ptr->voff_opl);
+        }
+      }
+    }
+    
+    // rjf: produce pdb conversion context
+    {
+      PDBCONV_CtxParams p = {0};
+      {
+        p.arch = architecture;
+        p.tpi_hash = tpi_hash;
+        p.tpi_leaf = tpi_leaf;
+        p.sections = coff_sections;
+        p.fwd_map_bucket_count          = tpi->itype_opl/10;
+        p.frame_proc_map_bucket_count   = symbol_count_prediction;
+        p.known_global_map_bucket_count = symbol_count_prediction;
+        p.link_name_map_bucket_count    = symbol_count_prediction;
+      }
+      pdbconv_ctx = pdbconv_ctx_alloc(&p, root);
+    }
+    
+    // types & symbols
+    {
+      PDBCONV_TypesSymbolsParams p = {0};
+      p.sym = sym;
+      p.sym_for_unit = sym_for_unit;
+      p.unit_count = comp_unit_count;
+      pdbconv_types_and_symbols(pdbconv_ctx, &p);
+    }
+    
+    // conversion errors
+    if (!params->hide_errors.converting){
+      for (CONS_Error *error = cons_get_first_error(root);
+           error != 0;
+           error = error->next){
+        str8_list_push(arena, &out->errors, error->msg);
+      }
+    }
+  }
+  
   // dump
   if (params->dump) ProfScope("dump"){
     String8List dump = {0};
@@ -3260,221 +3547,46 @@ str8_list_pushf(arena, &out->errors, fmt, __VA_ARGS__);\
       }
     }
     
-    out->dump = dump;
-  }
-  
-  // output generation
-  if (params->output_name.size > 0){
-    
-    // determine arch
-    RADDBG_Arch architecture = RADDBG_Arch_NULL;
-    // TODO(rjf): in some cases, the first compilation unit has a zero
-    // architecture, as it's sometimes used as a "nil" unit. this causes bugs
-    // in later stages of conversion - particularly, this was detected via
-    // busted location info. so i've converted this to a scan-until-we-find-an-
-    // architecture. however, this is still fundamentally insufficient, because
-    // Nick has informed me that x86 units can be linked with x64 units,
-    // meaning the appropriate architecture at any point in time is not a top-
-    // level concept, and is rather dependent on to which compilation unit
-    // particular symbols belong. so in the future, to support that (odd) case,
-    // we'll need to not only have this be a top-level "contextual" piece of
-    // info, but to use the appropriate compilation unit's architecture when
-    // possible.
-    //
-    for(U64 comp_unit_idx = 0; comp_unit_idx < comp_unit_count; comp_unit_idx += 1)
+    // rjf: dump table diagnostics
+    if(params->dump_table_diagnostics)
     {
-      if(sym_for_unit[comp_unit_idx] != 0)
+      str8_list_push(arena, &dump,
+                     str8_lit("################################"
+                              "################################\n"
+                              "TABLE DIAGNOSTICS:\n"));
+      struct
       {
-        architecture = raddbg_arch_from_cv_arch(sym_for_unit[comp_unit_idx]->info.arch);
-        if(architecture != 0)
-        {
-          break;
-        }
+        String8 name;
+        U64 bucket_count;
+        U64 value_count;
+        U64 collision_count;
       }
-    }
-    U64 addr_size = raddbg_addr_size_from_arch(architecture);
-    
-    
-    // predict symbol counts
-    U64 symbol_count_prediction = 0;
-    {
-      U64 rec_range_count = 0;
-      if (sym != 0){
-        rec_range_count += sym->sym_ranges.count;
+      table_info[] =
+      {
+        {str8_lit("pdbconv_ctx fwd_map"),        pdbconv_ctx?pdbconv_ctx->fwd_map.buckets_count:0,         pdbconv_ctx?pdbconv_ctx->fwd_map.pair_count:0,         pdbconv_ctx?pdbconv_ctx->fwd_map.bucket_collision_count:0},
+        {str8_lit("pdbconv_ctx frame_proc_map"), pdbconv_ctx?pdbconv_ctx->frame_proc_map.buckets_count:0,  pdbconv_ctx?pdbconv_ctx->frame_proc_map.pair_count:0,  pdbconv_ctx?pdbconv_ctx->frame_proc_map.bucket_collision_count:0},
+        {str8_lit("pdbconv_ctx known_globals"),  pdbconv_ctx?pdbconv_ctx->known_globals.buckets_count:0,   pdbconv_ctx?pdbconv_ctx->known_globals.global_count:0, pdbconv_ctx?pdbconv_ctx->known_globals.bucket_collision_count:0},
+        {str8_lit("pdbconv_ctx link_names"),     pdbconv_ctx?pdbconv_ctx->link_names.buckets_count:0,      pdbconv_ctx?pdbconv_ctx->link_names.link_name_count:0, pdbconv_ctx?pdbconv_ctx->link_names.bucket_collision_count:0},
+        {str8_lit("cons_root unit_map"),         out->root->unit_map.buckets_count,          out->root->unit_map.pair_count,          out->root->unit_map.bucket_collision_count},
+        {str8_lit("cons_root symbol_map"),       out->root->symbol_map.buckets_count,        out->root->symbol_map.pair_count,        out->root->symbol_map.bucket_collision_count},
+        {str8_lit("cons_root scope_map"),        out->root->scope_map.buckets_count,         out->root->scope_map.pair_count,         out->root->scope_map.bucket_collision_count},
+        {str8_lit("cons_root local_map"),        out->root->local_map.buckets_count,         out->root->local_map.pair_count,         out->root->local_map.bucket_collision_count},
+        {str8_lit("cons_root type_from_id_map"), out->root->type_from_id_map.buckets_count,  out->root->type_from_id_map.pair_count,  out->root->type_from_id_map.bucket_collision_count},
+        {str8_lit("cons_root construct_map"),    out->root->construct_map.buckets_count,     out->root->construct_map.pair_count,     out->root->construct_map.bucket_collision_count},
+      };
+      for(U64 idx = 0; idx < ArrayCount(table_info); idx += 1)
+      {
+        str8_list_pushf(arena, &dump, "%S: %I64u values in %I64u buckets, with %I64u collisions (%f fill)\n",
+                        table_info[idx].name,
+                        table_info[idx].value_count,
+                        table_info[idx].bucket_count,
+                        table_info[idx].collision_count,
+                        (F64)table_info[idx].value_count / (F64)table_info[idx].bucket_count);
       }
-      for (U64 i = 0; i < comp_unit_count; i += 1){
-        CV_SymParsed *unit_sym = sym_for_unit[i];
-        rec_range_count += unit_sym->sym_ranges.count;
-      }
-      symbol_count_prediction = rec_range_count/8;
-      if (symbol_count_prediction < 128){
-        symbol_count_prediction = 128;
-      }
-    }
-    
-    
-    // setup root
-    CONS_RootParams root_params = {0};
-    root_params.addr_size = addr_size;
-    
-    root_params.bucket_count_units = comp_unit_count;
-    root_params.bucket_count_symbols = symbol_count_prediction;
-    root_params.bucket_count_scopes = symbol_count_prediction;
-    root_params.bucket_count_locals = symbol_count_prediction;
-    root_params.bucket_count_types = tpi->itype_opl;
-    
-    CONS_Root *root = cons_root_new(&root_params);
-    out->root = root;
-    
-    // top level info
-    {
-      // calculate voff max
-      U64 voff_max = 0;
-      {        
-        COFF_SectionHeader *coff_sec_ptr = coff_sections->sections;
-        COFF_SectionHeader *coff_ptr_opl = coff_sec_ptr + coff_section_count;
-        for (;coff_sec_ptr < coff_ptr_opl; coff_sec_ptr += 1){
-          U64 sec_voff_max = coff_sec_ptr->voff + coff_sec_ptr->vsize;
-          voff_max = Max(voff_max, sec_voff_max);
-        }
-      }
-      
-      // set top level info
-      CONS_TopLevelInfo tli = {0};
-      tli.architecture = architecture;
-      tli.exe_name = params->input_exe_name;
-      tli.exe_hash = exe_hash;
-      tli.voff_max = voff_max;
-      
-      cons_set_top_level_info(root, &tli);
+      str8_list_push(arena, &dump, str8_lit("\n"));
     }
     
-    
-    // setup binary sections
-    {
-      COFF_SectionHeader *coff_ptr = coff_sections->sections;
-      COFF_SectionHeader *coff_opl = coff_ptr + coff_section_count;
-      for (;coff_ptr < coff_opl; coff_ptr += 1){
-        char *name_first = (char*)coff_ptr->name;
-        char *name_opl   = name_first + sizeof(coff_ptr->name);
-        String8 name = str8_cstring_capped(name_first, name_opl);
-        RADDBG_BinarySectionFlags flags =
-          raddbg_binary_section_flags_from_coff_section_flags(coff_ptr->flags);
-        cons_add_binary_section(root, name, flags,
-                                coff_ptr->voff, coff_ptr->voff + coff_ptr->vsize,
-                                coff_ptr->foff, coff_ptr->foff + coff_ptr->fsize);
-      }
-    }
-    
-    
-    // setup compilation units
-    {
-      PDB_CompUnit **units = comp_units->units;
-      for (U64 i = 0; i < comp_unit_count; i += 1){
-        PDB_CompUnit *unit = units[i];
-        CV_SymParsed *unit_sym = sym_for_unit[i];
-        CV_C13Parsed *unit_c13 = c13_for_unit[i];
-        
-        // resolve names
-        String8 raw_name = unit->obj_name;
-        
-        String8 unit_name = raw_name;
-        {
-          U64 first_after_slashes = 0;
-          for (S64 i = unit_name.size - 1; i >= 0; i -= 1){
-            if (unit_name.str[i] == '/' || unit_name.str[i] == '\\'){
-              first_after_slashes = i + 1;
-              break;
-            }
-          }
-          unit_name = str8_range(raw_name.str + first_after_slashes,
-                                 raw_name.str + raw_name.size);
-        }
-        
-        String8 obj_name = raw_name;
-        if (str8_match(obj_name, str8_lit("* Linker *"), 0) ||
-            str8_match(obj_name, str8_lit("Import:"),
-                       StringMatchFlag_RightSideSloppy)){
-          MemoryZeroStruct(&obj_name);
-        }
-        
-        String8 compiler_name = unit_sym->info.compiler_name;
-        String8 archive_file = unit->group_name;
-        
-        // extract langauge
-        RADDBG_Language lang = raddbg_language_from_cv_language(sym->info.language);
-        
-        // basic per unit info
-        CONS_Unit *unit_handle = cons_unit_handle_from_user_id(root, i);
-        
-        CONS_UnitInfo info = {0};
-        info.unit_name = unit_name;
-        info.compiler_name = compiler_name;
-        info.object_file = obj_name;
-        info.archive_file = archive_file;
-        info.language = lang;
-        
-        cons_unit_set_info(root, unit_handle, &info);
-        
-        // unit's line info
-        for (CV_C13SubSectionNode *node = unit_c13->first_sub_section;
-             node != 0;
-             node = node->next){
-          if (node->kind == CV_C13_SubSectionKind_Lines){
-            CV_C13LinesParsed *lines = node->lines;
-            if (lines != 0){
-              CONS_LineSequence seq = {0};
-              seq.file_name  = lines->file_name;
-              seq.voffs      = lines->voffs;
-              seq.line_nums  = lines->line_nums;
-              seq.col_nums   = lines->col_nums;
-              seq.line_count = lines->line_count;
-              cons_unit_add_line_sequence(root, unit_handle, &seq);
-            }
-          }
-        }
-      }
-    }
-    
-    
-    // unit vmap ranges
-    {
-      PDB_CompUnitContribution *contrib_ptr = comp_unit_contributions->contributions;
-      PDB_CompUnitContribution *contrib_opl = contrib_ptr + comp_unit_contribution_count;
-      for (;contrib_ptr < contrib_opl; contrib_ptr += 1){
-        if (contrib_ptr->mod < root->unit_count){
-          CONS_Unit *unit_handle = cons_unit_handle_from_user_id(root, contrib_ptr->mod);
-          cons_unit_vmap_add_range(root, unit_handle,
-                                   contrib_ptr->voff_first,
-                                   contrib_ptr->voff_opl);
-        }
-      }
-    }
-    
-    
-    // types & symbols
-    {
-      PDBCONV_TypesSymbolsParams pdb_params = {0};
-      pdb_params.architecture = architecture;
-      pdb_params.sym = sym;
-      pdb_params.sym_for_unit = sym_for_unit;
-      pdb_params.unit_count = comp_unit_count;
-      pdb_params.tpi_hash = tpi_hash;
-      pdb_params.tpi_leaf = tpi_leaf;
-      pdb_params.sections = coff_sections;
-      
-      pdbconv_types_and_symbols(&pdb_params, root);
-    }
-    
-    
-    // conversion errors
-    if (!params->hide_errors.converting){
-      for (CONS_Error *error = cons_get_first_error(root);
-           error != 0;
-           error = error->next){
-        str8_list_push(arena, &out->errors, error->msg);
-      }
-    }
+    out->dump = dump;
   }
   
   return out;

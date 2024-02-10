@@ -243,26 +243,6 @@ struct DF_CtrlFlowInfo
 };
 
 ////////////////////////////////
-//~ rjf: Unwind Types
-
-typedef struct DF_UnwindFrame DF_UnwindFrame;
-struct DF_UnwindFrame
-{
-  DF_UnwindFrame *next;
-  U64 rip;
-  void *regs;
-};
-
-typedef struct DF_Unwind DF_Unwind;
-struct DF_Unwind
-{
-  DF_UnwindFrame *first;
-  DF_UnwindFrame *last;
-  U64 count;
-  B32 error;
-};
-
-////////////////////////////////
 //~ rjf: Evaluation Types
 
 typedef struct DF_Eval DF_Eval;
@@ -285,10 +265,10 @@ struct DF_Eval
 ////////////////////////////////
 //~ rjf: View Rule Hook Types
 
-#define DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_SIG(name) DF_Eval name(Arena *arena, DBGI_Scope *dbgi_scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_Eval eval, struct DF_CfgVal *val)
+#define DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_SIG(name) DF_Eval name(Arena *arena, DBGI_Scope *dbgi_scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_Eval eval, struct DF_CfgVal *val)
 #define DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_NAME(name) df_core_view_rule_eval_resolution__##name
 #define DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_DEF(name) internal DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_SIG(DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_NAME(name))
-#define DF_CORE_VIEW_RULE_VIZ_BLOCK_PROD_FUNCTION_SIG(name) void name(Arena *arena, DBGI_Scope *dbgi_scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, struct DF_EvalView *eval_view, DF_Eval eval, struct DF_CfgTable *cfg_table, DF_ExpandKey parent_key, DF_ExpandKey key, S32 depth, struct DF_CfgNode *cfg, struct DF_EvalVizBlockList *out)
+#define DF_CORE_VIEW_RULE_VIZ_BLOCK_PROD_FUNCTION_SIG(name) void name(Arena *arena, DBGI_Scope *dbgi_scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, struct DF_EvalView *eval_view, DF_Eval eval, struct DF_CfgTable *cfg_table, DF_ExpandKey parent_key, DF_ExpandKey key, S32 depth, struct DF_CfgNode *cfg, struct DF_EvalVizBlockList *out)
 #define DF_CORE_VIEW_RULE_VIZ_BLOCK_PROD_FUNCTION_NAME(name) df_core_view_rule_viz_block_prod__##name
 #define DF_CORE_VIEW_RULE_VIZ_BLOCK_PROD_FUNCTION_DEF(name) internal DF_CORE_VIEW_RULE_VIZ_BLOCK_PROD_FUNCTION_SIG(DF_CORE_VIEW_RULE_VIZ_BLOCK_PROD_FUNCTION_NAME(name))
 typedef DF_CORE_VIEW_RULE_EVAL_RESOLUTION_FUNCTION_SIG(DF_CoreViewRuleEvalResolutionHookFunctionType);
@@ -510,6 +490,23 @@ struct DF_EntityRec
   DF_Entity *next;
   S32 push_count;
   S32 pop_count;
+};
+
+////////////////////////////////
+//~ rjf: Entity Fuzzy Listing Types
+
+typedef struct DF_EntityFuzzyItem DF_EntityFuzzyItem;
+struct DF_EntityFuzzyItem
+{
+  DF_Entity *entity;
+  FuzzyMatchRangeList matches;
+};
+
+typedef struct DF_EntityFuzzyItemArray DF_EntityFuzzyItemArray;
+struct DF_EntityFuzzyItemArray
+{
+  DF_EntityFuzzyItem *v;
+  U64 count;
 };
 
 ////////////////////////////////
@@ -941,7 +938,8 @@ struct DF_RunUnwindCacheNode
 {
   DF_RunUnwindCacheNode *hash_next;
   DF_Handle thread;
-  DF_Unwind unwind;
+  CTRL_Unwind unwind;
+  U64 tls_base_vaddr;
 };
 
 typedef struct DF_RunUnwindCacheSlot DF_RunUnwindCacheSlot;
@@ -957,6 +955,33 @@ struct DF_RunUnwindCache
   Arena *arena;
   U64 table_size;
   DF_RunUnwindCacheSlot *table;
+};
+
+//- rjf: per-run tls-base-vaddr cache
+
+typedef struct DF_RunTLSBaseCacheNode DF_RunTLSBaseCacheNode;
+struct DF_RunTLSBaseCacheNode
+{
+  DF_RunTLSBaseCacheNode *hash_next;
+  DF_Handle process;
+  U64 root_vaddr;
+  U64 rip_vaddr;
+  U64 tls_base_vaddr;
+};
+
+typedef struct DF_RunTLSBaseCacheSlot DF_RunTLSBaseCacheSlot;
+struct DF_RunTLSBaseCacheSlot
+{
+  DF_RunTLSBaseCacheNode *first;
+  DF_RunTLSBaseCacheNode *last;
+};
+
+typedef struct DF_RunTLSBaseCache DF_RunTLSBaseCache;
+struct DF_RunTLSBaseCache
+{
+  Arena *arena;
+  U64 slots_count;
+  DF_RunTLSBaseCacheSlot *slots;
 };
 
 //- rjf: per-run locals cache
@@ -1111,6 +1136,9 @@ struct DF_State
   U64 unwind_cache_reggen_idx;
   U64 unwind_cache_memgen_idx;
   DF_RunUnwindCache unwind_cache;
+  U64 tls_base_cache_reggen_idx;
+  U64 tls_base_cache_memgen_idx;
+  DF_RunTLSBaseCache tls_base_cache;
   U64 locals_cache_reggen_idx;
   DF_RunLocalsCache locals_cache;
   U64 member_cache_reggen_idx;
@@ -1361,6 +1389,10 @@ internal void df_entity_list_push(Arena *arena, DF_EntityList *list, DF_Entity *
 internal DF_EntityArray df_entity_array_from_list(Arena *arena, DF_EntityList *list);
 #define df_first_entity_from_list(list) ((list)->first != 0 ? (list)->first->entity : &df_g_nil_entity)
 
+//- rjf: entity fuzzy list building
+internal DF_EntityFuzzyItemArray df_entity_fuzzy_item_array_from_entity_list_needle(Arena *arena, DF_EntityList *list, String8 needle);
+internal DF_EntityFuzzyItemArray df_entity_fuzzy_item_array_from_entity_array_needle(Arena *arena, DF_EntityArray *array, String8 needle);
+
 //- rjf: entity -> text info
 internal TXTI_Handle df_txti_handle_from_entity(DF_Entity *entity);
 
@@ -1372,6 +1404,9 @@ internal String8 df_full_path_from_entity(Arena *arena, DF_Entity *entity);
 
 //- rjf: display string entities, for referencing entities in ui
 internal String8 df_display_string_from_entity(Arena *arena, DF_Entity *entity);
+
+//- rjf: extra search tag strings for fuzzy filtering entities
+internal String8 df_search_tags_from_entity(Arena *arena, DF_Entity *entity);
 
 //- rjf: entity -> color operations
 internal Vec4F32 df_hsva_from_entity(DF_Entity *entity);
@@ -1508,9 +1543,9 @@ internal U64 df_type_num_from_binary_name(DF_Entity *binary, String8 name);
 //- rjf: thread info extraction helpers
 internal DF_Entity *df_module_from_process_vaddr(DF_Entity *process, U64 vaddr);
 internal DF_Entity *df_module_from_thread(DF_Entity *thread);
-internal U64 df_tls_base_vaddr_from_thread(DF_Entity *thread);
+internal U64 df_tls_base_vaddr_from_process_root_rip(DF_Entity *process, U64 root_vaddr, U64 rip_vaddr);
 internal Architecture df_architecture_from_entity(DF_Entity *entity);
-internal DF_Unwind df_push_unwind_from_thread(Arena *arena, DF_Entity *thread);
+internal CTRL_Unwind df_push_unwind_from_thread(Arena *arena, DF_Entity *thread);
 internal U64 df_rip_from_thread(DF_Entity *thread);
 internal U64 df_rip_from_thread_unwind(DF_Entity *thread, U64 unwind_count);
 internal EVAL_String2NumMap *df_push_locals_map_from_binary_voff(Arena *arena, DBGI_Scope *scope, DF_Entity *binary, U64 voff);
@@ -1541,10 +1576,10 @@ internal CTRL_Event df_ctrl_last_stop_event(void);
 internal B32 df_eval_memory_read(void *u, void *out, U64 addr, U64 size);
 internal EVAL_ParseCtx df_eval_parse_ctx_from_process_vaddr(DBGI_Scope *scope, DF_Entity *process, U64 vaddr);
 internal EVAL_ParseCtx df_eval_parse_ctx_from_src_loc(DBGI_Scope *scope, DF_Entity *file, TxtPt pt);
-internal DF_Eval df_eval_from_string(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, String8 string);
+internal DF_Eval df_eval_from_string(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, String8 string);
 internal DF_Eval df_value_mode_eval_from_eval(TG_Graph *graph, RADDBG_Parsed *rdbg, DF_CtrlCtx *ctrl_ctx, DF_Eval eval);
 internal DF_Eval df_dynamically_typed_eval_from_eval(TG_Graph *graph, RADDBG_Parsed *rdbg, DF_CtrlCtx *ctrl_ctx, DF_Eval eval);
-internal DF_Eval df_eval_from_eval_cfg_table(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_Eval eval, DF_CfgTable *cfg);
+internal DF_Eval df_eval_from_eval_cfg_table(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_Eval eval, DF_CfgTable *cfg);
 
 ////////////////////////////////
 //~ rjf: Evaluation Views
@@ -1582,8 +1617,8 @@ internal DF_EvalLinkBaseArray df_eval_link_base_array_from_chunk_list(Arena *are
 internal DF_EvalVizBlock *df_eval_viz_block_begin(Arena *arena, DF_EvalVizBlockKind kind, DF_ExpandKey parent_key, DF_ExpandKey key, S32 depth);
 internal DF_EvalVizBlock *df_eval_viz_block_split_and_continue(Arena *arena, DF_EvalVizBlockList *list, DF_EvalVizBlock *split_block, U64 split_idx);
 internal void df_eval_viz_block_end(DF_EvalVizBlockList *list, DF_EvalVizBlock *block);
-internal void df_append_viz_blocks_for_parent__rec(Arena *arena, DBGI_Scope *scope, DF_EvalView *view, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_ExpandKey parent_key, DF_ExpandKey key, String8 string, DF_Eval eval, TG_Member *opt_member, DF_CfgTable *cfg_table, S32 depth, DF_EvalVizBlockList *list_out);
-internal DF_EvalVizBlockList df_eval_viz_block_list_from_eval_view_expr_num(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, DF_EvalView *eval_view, String8 expr, U64 num);
+internal void df_append_viz_blocks_for_parent__rec(Arena *arena, DBGI_Scope *scope, DF_EvalView *view, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_ExpandKey parent_key, DF_ExpandKey key, String8 string, DF_Eval eval, TG_Member *opt_member, DF_CfgTable *cfg_table, S32 depth, DF_EvalVizBlockList *list_out);
+internal DF_EvalVizBlockList df_eval_viz_block_list_from_eval_view_expr_keys(Arena *arena, DBGI_Scope *scope, DF_CtrlCtx *ctrl_ctx, EVAL_ParseCtx *parse_ctx, EVAL_String2ExprMap *macro_map, DF_EvalView *eval_view, String8 expr, DF_ExpandKey parent_key, DF_ExpandKey key);
 internal void df_eval_viz_block_list_concat__in_place(DF_EvalVizBlockList *dst, DF_EvalVizBlockList *to_push);
 
 //- rjf: viz block list <-> table coordinates
@@ -1640,9 +1675,10 @@ internal DF_EntityList df_push_active_binary_list(Arena *arena);
 internal DF_EntityList df_push_active_target_list(Arena *arena);
 
 //- rjf: per-run caches
-internal DF_Unwind df_query_cached_unwind_from_thread(DF_Entity *thread);
+internal CTRL_Unwind df_query_cached_unwind_from_thread(DF_Entity *thread);
 internal U64 df_query_cached_rip_from_thread(DF_Entity *thread);
 internal U64 df_query_cached_rip_from_thread_unwind(DF_Entity *thread, U64 unwind_count);
+internal U64 df_query_cached_tls_base_vaddr_from_process_root_rip(DF_Entity *process, U64 root_vaddr, U64 rip_vaddr);
 internal EVAL_String2NumMap *df_query_cached_locals_map_from_binary_voff(DF_Entity *binary, U64 voff);
 internal EVAL_String2NumMap *df_query_cached_member_map_from_binary_voff(DF_Entity *binary, U64 voff);
 

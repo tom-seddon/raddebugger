@@ -7,7 +7,7 @@
 //- init
 static CONS_Root*
 cons_root_new(CONS_RootParams *params){
-  Arena *arena = arena_alloc__sized(GB(64), MB(256));
+  Arena *arena = arena_alloc__sized(GB(64), MB(64));
   CONS_Root *result = push_array(arena, CONS_Root, 1);
   result->arena = arena;
   
@@ -49,6 +49,7 @@ cons_root_new(CONS_RootParams *params){
     cons__u64toptr_init(arena, &result->scope_map, BKTCOUNT(params->bucket_count_scopes));
     cons__u64toptr_init(arena, &result->local_map, BKTCOUNT(params->bucket_count_locals));
     cons__u64toptr_init(arena, &result->type_from_id_map, BKTCOUNT(params->bucket_count_types));
+    cons__str8toptr_init(arena, &result->construct_map, BKTCOUNT(params->bucket_count_type_constructs));
     
 #undef BKTCOUNT
   }
@@ -517,7 +518,7 @@ cons_add_binary_section(CONS_Root *root, String8 name, RADDBG_BinarySectionFlags
 static CONS_Unit*
 cons_unit_handle_from_user_id(CONS_Root *root, U64 unit_user_id){
   CONS__U64ToPtrLookup lookup = {0};
-  cons__u64toptr_lookup(&root->unit_map, unit_user_id, &lookup);
+  cons__u64toptr_lookup(&root->unit_map, unit_user_id, unit_user_id, &lookup);
   
   CONS_Unit *result = 0;
   if (lookup.match != 0){
@@ -528,7 +529,7 @@ cons_unit_handle_from_user_id(CONS_Root *root, U64 unit_user_id){
     result->idx = root->unit_count;
     SLLQueuePush_N(root->unit_first, root->unit_last, result, next_order);
     root->unit_count += 1;
-    cons__u64toptr_insert(root->arena, &root->unit_map, unit_user_id, &lookup, result);
+    cons__u64toptr_insert(root->arena, &root->unit_map, unit_user_id, unit_user_id, &lookup, result);
   }
   
   return(result);
@@ -589,7 +590,7 @@ cons_unit_vmap_add_range(CONS_Root *root, CONS_Unit *unit, U64 first, U64 opl){
 static CONS_Type*
 cons_type_from_id(CONS_Root *root, U64 type_user_id){
   CONS__U64ToPtrLookup lookup = {0};
-  cons__u64toptr_lookup(&root->type_from_id_map, type_user_id, &lookup);
+  cons__u64toptr_lookup(&root->type_from_id_map, type_user_id, type_user_id, &lookup);
   
   CONS_Type *result = (CONS_Type*)lookup.match;
   return(result);
@@ -598,11 +599,11 @@ cons_type_from_id(CONS_Root *root, U64 type_user_id){
 static CONS_Reservation*
 cons_type_reserve_id(CONS_Root *root, U64 type_user_id){
   CONS__U64ToPtrLookup lookup = {0};
-  cons__u64toptr_lookup(&root->type_from_id_map, type_user_id, &lookup);
+  cons__u64toptr_lookup(&root->type_from_id_map, type_user_id, type_user_id, &lookup);
   
   CONS_Reservation *result = 0;
   if (lookup.match == 0){
-    cons__u64toptr_insert(root->arena, &root->type_from_id_map, type_user_id, &lookup, root->nil_type);
+    cons__u64toptr_insert(root->arena, &root->type_from_id_map, type_user_id, type_user_id, &lookup, root->nil_type);
     void **slot = &lookup.fill_node->ptr[lookup.fill_k];
     result = (CONS_Reservation*)slot;
   }
@@ -1318,7 +1319,8 @@ cons_type_list_push(Arena *arena, CONS_TypeList *list, CONS_Type *type){
 static CONS_Symbol*
 cons_symbol_handle_from_user_id(CONS_Root *root, U64 symbol_user_id){
   CONS__U64ToPtrLookup lookup = {0};
-  cons__u64toptr_lookup(&root->symbol_map, symbol_user_id, &lookup);
+  U64 symbol_hash = raddbg_hash((U8 *)&symbol_user_id, sizeof(symbol_user_id));
+  cons__u64toptr_lookup(&root->symbol_map, symbol_user_id, symbol_hash, &lookup);
   
   CONS_Symbol *result = 0;
   if (lookup.match != 0){
@@ -1328,7 +1330,7 @@ cons_symbol_handle_from_user_id(CONS_Root *root, U64 symbol_user_id){
     result = push_array(root->arena, CONS_Symbol, 1);
     SLLQueuePush_N(root->first_symbol, root->last_symbol, result, next_order);
     root->symbol_count += 1;
-    cons__u64toptr_insert(root->arena, &root->symbol_map, symbol_user_id, &lookup, result);
+    cons__u64toptr_insert(root->arena, &root->symbol_map, symbol_user_id, symbol_hash, &lookup, result);
   }
   
   return(result);
@@ -1336,6 +1338,7 @@ cons_symbol_handle_from_user_id(CONS_Root *root, U64 symbol_user_id){
 
 static void
 cons_symbol_set_info(CONS_Root *root, CONS_Symbol *symbol, CONS_SymbolInfo *info){
+  ProfBeginFunction();
   CONS_SymbolKind kind = info->kind;
   
   if (symbol->kind != CONS_SymbolKind_NULL){
@@ -1408,7 +1411,8 @@ cons_symbol_set_info(CONS_Root *root, CONS_Symbol *symbol, CONS_SymbolInfo *info
           map = cons__name_map_for_kind(root, RADDBG_NameMapKind_Procedures);
         }break;
       }
-      if (map != 0){
+      if(map != 0) ProfScope("save name map")
+      {
         cons__name_map_add_pair(root, map, symbol->name, symbol->idx);
       }
     }
@@ -1419,6 +1423,7 @@ cons_symbol_set_info(CONS_Root *root, CONS_Symbol *symbol, CONS_SymbolInfo *info
       cons__name_map_add_pair(root, map, symbol->link_name, symbol->idx);
     }
   }
+  ProfEnd();
 }
 
 // scopes
@@ -1426,7 +1431,7 @@ cons_symbol_set_info(CONS_Root *root, CONS_Symbol *symbol, CONS_SymbolInfo *info
 static CONS_Scope*
 cons_scope_handle_from_user_id(CONS_Root *root, U64 scope_user_id){
   CONS__U64ToPtrLookup lookup = {0};
-  cons__u64toptr_lookup(&root->scope_map, scope_user_id, &lookup);
+  cons__u64toptr_lookup(&root->scope_map, scope_user_id, scope_user_id, &lookup);
   
   CONS_Scope *result = 0;
   if (lookup.match != 0){
@@ -1437,7 +1442,7 @@ cons_scope_handle_from_user_id(CONS_Root *root, U64 scope_user_id){
     result->idx = root->scope_count;
     SLLQueuePush_N(root->first_scope, root->last_scope, result, next_order);
     root->scope_count += 1;
-    cons__u64toptr_insert(root->arena, &root->scope_map, scope_user_id, &lookup, result);
+    cons__u64toptr_insert(root->arena, &root->scope_map, scope_user_id, scope_user_id, &lookup, result);
   }
   
   return(result);
@@ -1474,7 +1479,8 @@ cons_scope_add_voff_range(CONS_Root *root, CONS_Scope *scope, U64 voff_first, U6
 static CONS_Local*
 cons_local_handle_from_user_id(CONS_Root *root, U64 local_user_id){
   CONS__U64ToPtrLookup lookup = {0};
-  cons__u64toptr_lookup(&root->local_map, local_user_id, &lookup);
+  U64 local_hash = raddbg_hash((U8*)&local_user_id, sizeof(local_user_id));
+  cons__u64toptr_lookup(&root->local_map, local_user_id, local_hash, &lookup);
   
   CONS_Local *result = 0;
   if (lookup.match != 0){
@@ -1482,7 +1488,7 @@ cons_local_handle_from_user_id(CONS_Root *root, U64 local_user_id){
   }
   else{
     result = push_array(root->arena, CONS_Local, 1);
-    cons__u64toptr_insert(root->arena, &root->local_map, local_user_id, &lookup, result);
+    cons__u64toptr_insert(root->arena, &root->local_map, local_user_id, local_hash, &lookup, result);
   }
   
   return(result);
@@ -1697,12 +1703,14 @@ cons__type_udt_from_record_type(CONS_Root *root, CONS_Type *type){
 
 static void
 cons__scope_recursive_set_symbol(CONS_Scope *scope, CONS_Symbol *symbol){
+  ProfBeginFunction();
   scope->symbol = symbol;
   for (CONS_Scope *node = scope->first_child;
        node != 0;
        node = node->next_sibling){
     cons__scope_recursive_set_symbol(node, symbol);
   }
+  ProfEnd();
 }
 
 // name maps
@@ -1713,6 +1721,8 @@ cons__name_map_for_kind(CONS_Root *root, RADDBG_NameMapKind kind){
   if (kind < RADDBG_NameMapKind_COUNT){
     if (root->name_maps[kind] == 0){
       root->name_maps[kind] = push_array(root->arena, CONS__NameMap, 1);
+      root->name_maps[kind]->buckets_count = 16384;
+      root->name_maps[kind]->buckets = push_array(root->arena, CONS__NameMapNode *, root->name_maps[kind]->buckets_count);
     }
     result = root->name_maps[kind];
   }
@@ -1721,9 +1731,11 @@ cons__name_map_for_kind(CONS_Root *root, RADDBG_NameMapKind kind){
 
 static void
 cons__name_map_add_pair(CONS_Root *root, CONS__NameMap *map, String8 string, U32 idx){
+  ProfBeginFunction();
+  
   // hash
   U64 hash = raddbg_hash(string.str, string.size);
-  U64 bucket_idx = hash%ArrayCount(map->buckets);
+  U64 bucket_idx = hash%map->buckets_count;
   
   // find existing name node
   CONS__NameMapNode *match = 0;
@@ -1743,6 +1755,7 @@ cons__name_map_add_pair(CONS_Root *root, CONS__NameMap *map, String8 string, U32
     SLLStackPush_N(map->buckets[bucket_idx], match, bucket_next);
     SLLQueuePush_N(map->first, map->last, match, order_next);
     map->name_count += 1;
+    map->bucket_collision_count += (match->bucket_next != 0);
   }
   
   // find existing idx
@@ -1774,6 +1787,8 @@ cons__name_map_add_pair(CONS_Root *root, CONS__NameMap *map, String8 string, U32
     idx_node->idx[insert_i] = idx;
     match->idx_count += 1;
   }
+  
+  ProfEnd();
 }
 
 // u64 to ptr map
@@ -1782,13 +1797,13 @@ static void
 cons__u64toptr_init(Arena *arena, CONS__U64ToPtrMap *map, U64 bucket_count){
   Assert(IsPow2OrZero(bucket_count) && bucket_count > 0);
   map->buckets = push_array(arena, CONS__U64ToPtrNode*, bucket_count);
-  map->bucket_count = bucket_count;
+  map->buckets_count = bucket_count;
 }
 
 static void
-cons__u64toptr_lookup(CONS__U64ToPtrMap *map, U64 key, CONS__U64ToPtrLookup *lookup_out){
+cons__u64toptr_lookup(CONS__U64ToPtrMap *map, U64 key, U64 hash, CONS__U64ToPtrLookup *lookup_out){
   ProfBeginFunction();
-  U64 bucket_idx = key&(map->bucket_count - 1);
+  U64 bucket_idx = hash&(map->buckets_count - 1);
   CONS__U64ToPtrNode *check_node = map->buckets[bucket_idx];
   for (;check_node != 0; check_node = check_node->next){
     for (U32 k = 0; k < ArrayCount(check_node->key); k += 1){
@@ -1807,8 +1822,9 @@ cons__u64toptr_lookup(CONS__U64ToPtrMap *map, U64 key, CONS__U64ToPtrLookup *loo
 }
 
 static void
-cons__u64toptr_insert(Arena *arena, CONS__U64ToPtrMap *map, U64 key,
+cons__u64toptr_insert(Arena *arena, CONS__U64ToPtrMap *map, U64 key, U64 hash,
                       CONS__U64ToPtrLookup *lookup, void *ptr){
+  ProfBeginFunction();
   if (lookup->fill_node != 0){
     CONS__U64ToPtrNode *node = lookup->fill_node;
     U32 k = lookup->fill_k;
@@ -1816,7 +1832,7 @@ cons__u64toptr_insert(Arena *arena, CONS__U64ToPtrMap *map, U64 key,
     node->ptr[k] = ptr;
   }
   else{
-    U64 bucket_idx = key&(map->bucket_count - 1);
+    U64 bucket_idx = hash&(map->buckets_count - 1);
     
     CONS__U64ToPtrNode *node = push_array(arena, CONS__U64ToPtrNode, 1);
     SLLStackPush(map->buckets[bucket_idx], node);
@@ -1825,16 +1841,27 @@ cons__u64toptr_insert(Arena *arena, CONS__U64ToPtrMap *map, U64 key,
     
     lookup->fill_node = node;
     lookup->fill_k = 0;
+    
+    map->pair_count += 1;
+    map->bucket_collision_count += (node->next != 0);
   }
+  ProfEnd();
 }
 
 // str8 to ptr map
+
+static void
+cons__str8toptr_init(Arena *arena, CONS__Str8ToPtrMap *map, U64 bucket_count)
+{
+  map->buckets_count = bucket_count;
+  map->buckets = push_array(arena, CONS__Str8ToPtrNode*, map->buckets_count);
+}
 
 static void*
 cons__str8toptr_lookup(CONS__Str8ToPtrMap *map, String8 key, U64 hash){
   ProfBeginFunction();
   void *result = 0;
-  U64 bucket_idx = hash%ArrayCount(map->buckets);
+  U64 bucket_idx = hash%map->buckets_count;
   for (CONS__Str8ToPtrNode *node = map->buckets[bucket_idx];
        node != 0;
        node = node->next){
@@ -1850,7 +1877,7 @@ cons__str8toptr_lookup(CONS__Str8ToPtrMap *map, String8 key, U64 hash){
 static void
 cons__str8toptr_insert(Arena *arena, CONS__Str8ToPtrMap *map, String8 key, U64 hash, void *ptr){
   ProfBeginFunction();
-  U64 bucket_idx = hash%ArrayCount(map->buckets);
+  U64 bucket_idx = hash%map->buckets_count;
   
   CONS__Str8ToPtrNode *node = push_array(arena, CONS__Str8ToPtrNode, 1);
   SLLStackPush(map->buckets[bucket_idx], node);
@@ -1858,6 +1885,8 @@ cons__str8toptr_insert(Arena *arena, CONS__Str8ToPtrMap *map, String8 key, U64 h
   node->key  = push_str8_copy(arena, key);
   node->hash = hash;
   node->ptr = ptr;
+  map->bucket_collision_count += (node->next != 0);
+  map->pair_count += 1;
   ProfEnd();
 }
 
@@ -1883,6 +1912,10 @@ cons__bake_ctx_begin(void){
   Arena *arena = arena_alloc();
   CONS__BakeCtx *result = push_array(arena, CONS__BakeCtx, 1);
   result->arena = arena;
+  result->strs.buckets_count = 16384;
+  result->strs.buckets = push_array(arena, CONS__StringNode *, result->strs.buckets_count);
+  result->idxs.buckets_count = 16384;
+  result->idxs.buckets = push_array(arena, CONS__IdxRunNode *, result->idxs.buckets_count);
   
   cons__string(result, str8_lit(""));
   
@@ -1913,7 +1946,7 @@ cons__string(CONS__BakeCtx *bctx, String8 str){
   CONS__Strings *strs = &bctx->strs;
   
   U64 hash = raddbg_hash(str.str, str.size);
-  U64 bucket_idx = hash%ArrayCount(strs->buckets);
+  U64 bucket_idx = hash%strs->buckets_count;
   
   // look for a match
   CONS__StringNode *match = 0;
@@ -1939,6 +1972,7 @@ cons__string(CONS__BakeCtx *bctx, String8 str){
     SLLStackPush_N(strs->buckets[bucket_idx], node, bucket_next);
     
     match = node;
+    strs->bucket_collision_count += (node->bucket_next != 0);
   }
   
   // extract idx to return
@@ -1965,7 +1999,7 @@ cons__idx_run(CONS__BakeCtx *bctx, U32 *idx_run, U32 count){
   CONS__IdxRuns *idxs = &bctx->idxs;
   
   U64 hash = cons__idx_run_hash(idx_run, count);
-  U64 bucket_idx = hash%ArrayCount(idxs->buckets);
+  U64 bucket_idx = hash%idxs->buckets_count;
   
   // look for a match
   CONS__IdxRunNode *match = 0;
@@ -2007,6 +2041,7 @@ cons__idx_run(CONS__BakeCtx *bctx, U32 *idx_run, U32 count){
     SLLStackPush_N(idxs->buckets[bucket_idx], node, bucket_next);
     
     match = node;
+    idxs->bucket_collision_count += (node->bucket_next != 0);
   }
   
   // extract idx to return
@@ -2404,62 +2439,72 @@ cons__source_combine_lines(Arena *arena, CONS__LineMapFragment *first){
   // gather line number map
   CONS__SrcLineMapBucket *first_bucket = 0;
   CONS__SrcLineMapBucket *last_bucket = 0;
-  
+  U64 line_hash_slots_count = 1024;
+  CONS__SrcLineMapBucket **line_hash_slots = push_array(scratch.arena, CONS__SrcLineMapBucket *, line_hash_slots_count);
   U64 line_count = 0;
   U64 voff_count = 0;
   U64 max_line_num = 0;
-  for (CONS__LineMapFragment *map_fragment = first;
-       map_fragment != 0;
-       map_fragment = map_fragment->next){
-    CONS_LineSequence *sequence = &map_fragment->sequence->line_seq;
-    
-    U64 *seq_voffs = sequence->voffs;
-    U32 *seq_line_nums = sequence->line_nums;
-    U64 seq_line_count = sequence->line_count;
-    for (U64 i = 0; i < seq_line_count; i += 1){
-      U32 line_num = seq_line_nums[i];
-      U64 voff = seq_voffs[i];
+  ProfScope("gather line number map")
+  {
+    for (CONS__LineMapFragment *map_fragment = first;
+         map_fragment != 0;
+         map_fragment = map_fragment->next)
+    {
+      CONS_LineSequence *sequence = &map_fragment->sequence->line_seq;
       
-      // update unique voff counter & max line number
-      voff_count += 1;
-      max_line_num = Max(max_line_num, line_num);
-      
-      // find match
-      CONS__SrcLineMapBucket *match = 0;
-      for (CONS__SrcLineMapBucket *node = first_bucket;
-           node != 0;
-           node = node->next){
-        if (node->line_num == line_num){
-          match = node;
-          break;
+      U64 *seq_voffs = sequence->voffs;
+      U32 *seq_line_nums = sequence->line_nums;
+      U64 seq_line_count = sequence->line_count;
+      for (U64 i = 0; i < seq_line_count; i += 1){
+        U32 line_num = seq_line_nums[i];
+        U64 voff = seq_voffs[i];
+        U64 line_hash_slot_idx = line_num%line_hash_slots_count;
+        
+        // update unique voff counter & max line number
+        voff_count += 1;
+        max_line_num = Max(max_line_num, line_num);
+        
+        // find match
+        CONS__SrcLineMapBucket *match = 0;
+        {
+          for (CONS__SrcLineMapBucket *node = line_hash_slots[line_hash_slot_idx];
+               node != 0;
+               node = node->hash_next){
+            if (node->line_num == line_num){
+              match = node;
+              break;
+            }
+          }
         }
-      }
-      
-      // introduce new line if no match
-      if (match == 0){
-        match = push_array(scratch.arena, CONS__SrcLineMapBucket, 1);
-        SLLQueuePush(first_bucket, last_bucket, match);
-        match->line_num = line_num;
-        line_count += 1;
-      }
-      
-      // insert new voff
-      {
-        CONS__SrcLineMapVoffBlock *block = push_array(scratch.arena, CONS__SrcLineMapVoffBlock, 1);
-        SLLQueuePush(match->first_voff_block, match->last_voff_block, block);
-        match->voff_count += 1;
-        block->voff = voff;
+        
+        // introduce new line if no match
+        if (match == 0){
+          match = push_array(scratch.arena, CONS__SrcLineMapBucket, 1);
+          SLLQueuePush_N(first_bucket, last_bucket, match, order_next);
+          SLLStackPush_N(line_hash_slots[line_hash_slot_idx], match, hash_next);
+          match->line_num = line_num;
+          line_count += 1;
+        }
+        
+        // insert new voff
+        {
+          CONS__SrcLineMapVoffBlock *block = push_array(scratch.arena, CONS__SrcLineMapVoffBlock, 1);
+          SLLQueuePush(match->first_voff_block, match->last_voff_block, block);
+          match->voff_count += 1;
+          block->voff = voff;
+        }
       }
     }
   }
   
   // bake sortable keys array
   CONS__SortKey *keys = push_array_no_zero(scratch.arena, CONS__SortKey, line_count);
+  ProfScope("bake sortable keys array")
   {
     CONS__SortKey *key_ptr = keys;
     for (CONS__SrcLineMapBucket *node = first_bucket;
          node != 0;
-         node = node->next, key_ptr += 1){
+         node = node->order_next, key_ptr += 1){
       key_ptr->key = node->line_num;
       key_ptr->val = node;
     }
@@ -2472,7 +2517,7 @@ cons__source_combine_lines(Arena *arena, CONS__LineMapFragment *first){
   U32 *line_nums = push_array_no_zero(arena, U32, line_count);
   U32 *line_ranges = push_array_no_zero(arena, U32, line_count + 1);
   U64 *voffs = push_array_no_zero(arena, U64, voff_count);
-  
+  ProfScope("bake result")
   {
     U64 *voff_ptr = voffs;
     for (U32 i = 0; i < line_count; i += 1){

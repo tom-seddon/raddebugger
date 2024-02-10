@@ -4,9 +4,9 @@
 ////////////////////////////////
 //~ rjf: Frontend/UI Pass Tasks
 //
-// [ ] hover-eval when window is not focused - maybe just start directly
+// [x] hover-eval when window is not focused - maybe just start directly
 //     using mouse-move events here
-// [ ] CRT asserts - stepping over int 29 should work just like stepping over
+// [x] CRT asserts - stepping over int 29 should work just like stepping over
 //     an int3
 // [ ] committing needs to happen when navigating focus away for any reason
 //
@@ -281,6 +281,7 @@
 // [ ] Fancy View Rules
 //  [ ] table column boundaries should be checked against *AFTER* table
 //      contents, not before
+//  [ ] `array:(x, y)` - multidimensional array
 //  [ ] `text[:lang]` - interpret memory as text, in lang `lang`
 //  [ ] `disasm:arch` - interpret memory as machine code for isa `arch`
 //  [ ] `memory` - view memory in usual memory hex-editor view
@@ -306,6 +307,7 @@
 //
 // [ ] @feature processor/data breakpoints
 // [ ] @feature automatically snap to search matches when searching source files
+// [ ] automatically start search query with selected text
 // [ ] @feature entity views: filtering & reordering
 
 ////////////////////////////////
@@ -405,10 +407,16 @@
 #define RADDBG_VERSION_PATCH 8
 #define RADDBG_VERSION_STRING_LITERAL Stringify(RADDBG_VERSION_MAJOR) "." Stringify(RADDBG_VERSION_MINOR) "." Stringify(RADDBG_VERSION_PATCH)
 #if defined(NDEBUG)
-# define RADDBG_TITLE_STRING_LITERAL "The RAD Debugger (" RADDBG_VERSION_STRING_LITERAL " ALPHA) - " __DATE__ ""
+# define RADDBG_BUILD_STR ""
 #else
-# define RADDBG_TITLE_STRING_LITERAL "The RAD Debugger (" RADDBG_VERSION_STRING_LITERAL " ALPHA) - " __DATE__ " [Debug]"
+# define RADDBG_BUILD_STR " [Debug]"
 #endif
+#if defined(RADDBG_GIT)
+# define RADDBG_GIT_STR " [" RADDBG_GIT "]"
+#else
+# define RADDBG_GIT_STR ""
+#endif
+#define RADDBG_TITLE_STRING_LITERAL "The RAD Debugger (" RADDBG_VERSION_STRING_LITERAL " ALPHA) - " __DATE__ "" RADDBG_GIT_STR RADDBG_BUILD_STR
 #define RADDBG_GITHUB_ISSUES "https://github.com/EpicGames/raddebugger/issues"
 
 ////////////////////////////////
@@ -438,8 +446,6 @@ read_only global String8 ipc_shared_memory_name = str8_lit_comp("_raddbg_ipc_sha
 read_only global String8 ipc_semaphore_name = str8_lit_comp("_raddbg_ipc_semaphore_");
 global U64 frame_time_us_history[64] = {0};
 global U64 frame_time_us_history_idx = 0;
-global Arena *leftover_events_arena = 0;
-global OS_EventList leftover_events = {0};
 
 ////////////////////////////////
 //~ rjf: Frontend Entry Points

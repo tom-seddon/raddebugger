@@ -39,16 +39,35 @@ EVAL_ExprKindTable:
   
   { Ternary             3         "? "           }
   
-  { LeafBytecode 0                "bytecode"     }
+  { LeafBytecode        0         "bytecode"     }
   { LeafMember          0         "member"       }
   { LeafU64             0         "U64"          }
   { LeafF64             0         "F64"          }
   { LeafF32             0         "F32"          }
   
-  { TypeIdent 0                   "type_ident"   }
+  { TypeIdent           0         "type_ident"   }
   { Ptr                 1         "ptr"          }
   { Array               2         "array"        }
   { Func                1         "function"     }
+  
+  { Define              2         "="            }
+  { LeafIdent           0         "leaf_ident"   }
+}
+
+@table(name display_string)
+EVAL_ResultCodeTable:
+{
+  { Good                    "" }
+  { DivideByZero            "Cannot divide by zero." }
+  { BadOp                   "Invalid operation." }
+  { BadOpTypes              "Invalid operation types." }
+  { BadMemRead              "Failed memory read." }
+  { BadRegRead              "Failed register read." }
+  { BadFrameBase            "Invalid frame base address." }
+  { BadModuleBase           "Invalid module base address." }
+  { BadTLSBase              "Invalid thread-local storage base address." }
+  { InsufficientStackSpace  "Insufficient evaluation machine stack space." }
+  { MalformedBytecode       "Malformed bytecode." }
 }
 
 @table_gen
@@ -62,6 +81,12 @@ EVAL_ExprKindTable:
   ``;
 }
 
+@table_gen_enum EVAL_ResultCode:
+{
+  @expand(EVAL_ResultCodeTable a) `EVAL_ResultCode_$(a.name),`;
+  EVAL_ResultCode_COUNT
+}
+
 @table_gen_data(type:U8, fallback:0)
 eval_expr_kind_child_counts:
 {
@@ -72,6 +97,12 @@ eval_expr_kind_child_counts:
 eval_expr_kind_strings:
 {
   @expand(EVAL_ExprKindTable a) `str8_lit_comp("$(a.name)"),`;
+}
+
+@table_gen_data(type:String8, fallback:`{0}`)
+eval_result_code_display_strings:
+{
+  @expand(EVAL_ResultCodeTable a) `str8_lit_comp("$(a.display_string)"),`;
 }
 
 @table_gen_data(type:String8, fallback:`{0}`)
